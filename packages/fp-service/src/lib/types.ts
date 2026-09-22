@@ -11,6 +11,25 @@ export const FP_DEFAULT_CLOSED_STATUSES: readonly string[] = [
 
 export type FpIssueState = "OPEN" | "CLOSED"
 
+export const FP_MILESTONE_KINDS = [
+  "work-started",
+  "pull-request",
+  "human-attention",
+  "completion",
+] as const
+
+export type FpMilestoneKind = (typeof FP_MILESTONE_KINDS)[number]
+
+/**
+ * Markdown-visible line tying a milestone comment to a Work Item, the same
+ * form Linear uses; fp comments are plain markdown, so the line survives a
+ * round trip and `fp comment list` can find it.
+ */
+export const fpMilestoneMarker = (
+  kind: FpMilestoneKind,
+  workItemId: string,
+): string => `ready-for-agent:${kind}:${workItemId}`
+
 /** The one place that turns an fp status into OPEN or CLOSED. */
 export const fpIssueState = (
   status: string,

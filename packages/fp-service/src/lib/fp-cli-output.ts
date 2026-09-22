@@ -47,8 +47,21 @@ const FpShowIssueSchema = Schema.Struct({
   ),
 })
 
+const FpCommentSchema = Schema.Struct({
+  id: Schema.String,
+  content: Schema.String,
+  author: Schema.optional(Schema.NullOr(Schema.String)),
+  createdAt: Schema.optional(IsoDate),
+})
+
+/** `fp comment list <id> --format json`: `{ "comments": [...] }`, newest first. */
+const FpCommentListSchema = Schema.Struct({
+  comments: Schema.Array(FpCommentSchema),
+})
+
 export type FpListIssue = typeof FpListIssueSchema.Type
 export type FpShowIssue = typeof FpShowIssueSchema.Type
+export type FpComment = typeof FpCommentSchema.Type
 
 const decodeJson = <S extends { readonly Type: unknown }>(
   schema: S & Parameters<typeof Schema.decodeUnknownSync>[0],
@@ -60,6 +73,9 @@ export const parseFpIssueList = (stdout: string): readonly FpListIssue[] =>
 
 export const parseFpIssueShow = (stdout: string): FpShowIssue =>
   decodeJson(FpShowIssueSchema, stdout)
+
+export const parseFpCommentList = (stdout: string): readonly FpComment[] =>
+  decodeJson(FpCommentListSchema, stdout).comments
 
 /** Labels live in the `labels` property; absent or null means none. */
 export const fpIssueLabels = (issue: FpShowIssue): readonly string[] =>
@@ -110,13 +126,17 @@ export const parseFpVersion = (stdout: string): string | null => {
 /**
  * fp reports failures as prose on stdout or stderr with exit code 1. These
  * are the messages observed on 0.25.0; anything else is `unknown`.
- * `invalid_status` is only reachable from status writes (execution half).
+ * `invalid_status` and `comment_not_found` are only reachable from writes.
  */
 export const classifyFpFailure = (
   combinedOutput: string,
 ): Extract<
   FpFailureKind,
-  "project_not_registered" | "issue_not_found" | "invalid_status" | "unknown"
+  | "project_not_registered"
+  | "issue_not_found"
+  | "comment_not_found"
+  | "invalid_status"
+  | "unknown"
 > => {
   if (
     /\.fp directory not found/i.test(combinedOutput) ||
@@ -126,6 +146,9 @@ export const classifyFpFailure = (
   }
   if (/^Issue \S+ not found/im.test(combinedOutput)) {
     return "issue_not_found"
+  }
+  if (/^Comment \S+ not found/im.test(combinedOutput)) {
+    return "comment_not_found"
   }
   if (/Invalid status/i.test(combinedOutput)) {
     return "invalid_status"

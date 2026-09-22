@@ -156,8 +156,94 @@ const writeProject = async (issues: readonly Fixture[]) => {
 
 const marker = (name: string) => writeFile(join(fixturesDirectory, name), "")
 
-const fakeFpScript = (fixtures: string, log: string): string => `#!/bin/sh
+/**
+ * The fake's writes: JSON editing the shell script delegates to Bun. Status
+ * writes rewrite both `show-*.json` copies; comments live in
+ * `comments-<nativeId>.json`, newest first as `fp comment list` prints them.
+ * A trailing newline in a body file is dropped, as fp 0.25.0 does.
+ */
+const MUTATE_SCRIPT = `
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+const [op, fixtures, target, value] = process.argv.slice(2)
+const showFile = (id) => join(fixtures, \`show-\${id}.json\`)
+const readJson = (file) => JSON.parse(readFileSync(file, "utf8"))
+const body = (file) => readFileSync(file, "utf8").replace(/\\n$/, "")
+const commentsFile = (issueId) => join(fixtures, \`comments-\${issueId}.json\`)
+const comments = (issueId) =>
+  existsSync(commentsFile(issueId)) ? readJson(commentsFile(issueId)) : { comments: [] }
+if (op === "status") {
+  const show = readJson(showFile(target))
+  show.status = value
+  show.updatedAt = new Date().toISOString()
+  const json = JSON.stringify(show)
+  writeFileSync(showFile(show.id), json)
+  writeFileSync(showFile(show.displayId), json)
+} else if (op === "list") {
+  process.stdout.write(JSON.stringify(comments(readJson(showFile(target)).id)))
+} else if (op === "add") {
+  const show = readJson(showFile(target))
+  const list = comments(show.id)
+  list.comments.unshift({
+    id: \`comment-\${list.comments.length + 1}\`,
+    issueId: show.id,
+    author: "operator@example.com",
+    content: body(value),
+    createdAt: new Date().toISOString(),
+  })
+  writeFileSync(commentsFile(show.id), JSON.stringify(list))
+} else if (op === "update") {
+  for (const name of readdirSync(fixtures).filter((n) => n.startsWith("comments-"))) {
+    const list = readJson(join(fixtures, name))
+    const comment = list.comments.find((c) => c.id === target)
+    if (comment !== undefined) {
+      comment.content = body(value)
+      writeFileSync(join(fixtures, name), JSON.stringify(list))
+      process.exit(0)
+    }
+  }
+  process.exit(3)
+}
+`
+
+const fakeFpScript = (
+  fixtures: string,
+  log: string,
+  bun: string,
+  mutate: string,
+): string => `#!/bin/sh
 printf '%s\\n' "$*" >> "${log}"
+notfound() { printf '%s\\n' "Issue $1 not found" "  Suggestion: Run 'fp issue list' to see available issues"; exit 1; }
+if [ "$1" = "issue" ] && [ "$2" = "update" ]; then
+  if [ -f "${fixtures}/invalid-status" ]; then
+    printf '%s\\n' "Invalid status: Status \\"$5\\" is not in the registered options." "  Suggestion: Use one of: todo, in-progress, done"
+    exit 1
+  fi
+  [ -f "${fixtures}/show-$3.json" ] || notfound "$3"
+  if [ ! -f "${fixtures}/silent" ]; then "${bun}" "${mutate}" status "${fixtures}" "$3" "$5" || exit 1; fi
+  printf '%s\\n' "" "✓ Updated $3:" "  - status: todo → $5" ""
+  exit 0
+fi
+if [ "$1" = "comment" ]; then
+  if [ "$2" = "list" ]; then
+    [ -f "${fixtures}/show-$3.json" ] || notfound "$3"
+    "${bun}" "${mutate}" list "${fixtures}" "$3"; exit $?
+  fi
+  if [ "$2" = "add" ]; then
+    [ -f "${fixtures}/show-$3.json" ] || notfound "$3"
+    if [ ! -f "${fixtures}/silent" ]; then "${bun}" "${mutate}" add "${fixtures}" "$3" "$5" || exit 1; fi
+    printf '%s\\n' "" "Added comment to $3" ""
+    exit 0
+  fi
+  if [ "$2" = "update" ]; then
+    if [ ! -f "${fixtures}/silent" ]; then
+      "${bun}" "${mutate}" update "${fixtures}" "$3" "$5"
+      if [ $? -eq 3 ]; then printf '%s\\n' "Comment $3 not found" "  Suggestion: Run 'fp comment list <issue-id>' to see available comments"; exit 1; fi
+    fi
+    printf '%s\\n' "" "Updated comment $3" ""
+    exit 0
+  fi
+fi
 if [ -f "${fixtures}/hang" ]; then sleep 30; exit 0; fi
 if [ -f "${fixtures}/crash" ]; then kill -9 $$; fi
 if [ "$1" = "--version" ]; then echo "0.25.0 (d818046)"; exit 0; fi
@@ -253,7 +339,12 @@ beforeAll(async () => {
   commandPath = join(directory, "fp")
   logPath = join(directory, "calls.log")
   project = { projectDirectory: directory }
-  await writeFile(commandPath, fakeFpScript(fixturesDirectory, logPath))
+  const mutatePath = join(directory, "mutate.ts")
+  await writeFile(mutatePath, MUTATE_SCRIPT)
+  await writeFile(
+    commandPath,
+    fakeFpScript(fixturesDirectory, logPath, process.execPath, mutatePath),
+  )
   await chmod(commandPath, 0o700)
 })
 
@@ -756,5 +847,237 @@ describe("FpService.checkReadiness", () => {
       withService((service) => service.checkReadiness(directory)),
     )
     expect(readiness._tag).toBe("cli_error")
+  })
+})
+
+const writeCalls = async (): Promise<readonly string[]> =>
+  (await calls()).filter(
+    (line) => line.startsWith("issue update ") || line.startsWith("comment "),
+  )
+
+describe("FpService.updateIssueStatus", () => {
+  test("moves an open Issue to the target status and reads the result back", async () => {
+    await run(
+      withService((service) =>
+        service.updateIssueStatus(project, CHILD_B, "in-progress"),
+      ),
+    )
+    const after = await run(
+      withService((service) => service.getIssue(project, CHILD_B)),
+    )
+    expect(after.status).toBe("in-progress")
+    expect(await writeCalls()).toEqual([
+      `issue update ${CHILD_B} --status in-progress`,
+    ])
+  })
+
+  test("accepts an Issue already in the target status without writing", async () => {
+    await run(
+      withService((service) =>
+        service.updateIssueStatus(project, SELECTED_G, "selected"),
+      ),
+    )
+    expect(await writeCalls()).toEqual([])
+  })
+
+  test("accepts a closed Issue without reopening or re-transitioning it", async () => {
+    await run(
+      withService((service) =>
+        service.updateIssueStatus(project, DONE_D, "in-progress"),
+      ),
+    )
+    expect(await writeCalls()).toEqual([])
+    const after = await run(
+      withService((service) => service.getIssue(project, DONE_D)),
+    )
+    expect(after.status).toBe("done")
+  })
+
+  test("uses the project's own closed statuses to decide what is closed", async () => {
+    await run(
+      withService((service) =>
+        service.updateIssueStatus(
+          { ...project, closedStatuses: ["done", "selected"] },
+          SELECTED_G,
+          "in-progress",
+        ),
+      ),
+    )
+    expect(await writeCalls()).toEqual([])
+  })
+
+  test("reports a status the project does not register as invalid_status", async () => {
+    await marker("invalid-status")
+    const error = await failureOf(
+      withService((service) =>
+        service.updateIssueStatus(project, CHILD_B, "shipping"),
+      ),
+    )
+    expect(error.kind).toBe("invalid_status")
+    expect(error.message).toContain("not registered")
+  })
+
+  test("reports an Issue that does not exist as issue_not_found", async () => {
+    const error = await failureOf(
+      withService((service) =>
+        service.updateIssueStatus(project, "nope", "in-progress"),
+      ),
+    )
+    expect(error.kind).toBe("issue_not_found")
+    expect(await writeCalls()).toEqual([])
+  })
+
+  test("fails as write_not_applied when fp reports success but the status did not move", async () => {
+    await marker("silent")
+    const error = await failureOf(
+      withService((service) =>
+        service.updateIssueStatus(project, CHILD_B, "in-progress"),
+      ),
+    )
+    expect(error.kind).toBe("write_not_applied")
+    expect(error.message).toContain("reads back as todo")
+  })
+})
+
+const MARKER = "ready-for-agent:work-started:wi-123"
+const BODY = `- Work started by ready-for-agent on Child B.\nSecond line with \`code\`.\n\n${MARKER}\n`
+
+/** Ensure the standard marked comment, then return what the fake stored. */
+const markedComments = async (issueId: string) => {
+  await run(
+    withService((service) =>
+      service.ensureMilestoneComment(project, issueId, MARKER, BODY),
+    ),
+  )
+  const stored = JSON.parse(
+    await readFile(join(fixturesDirectory, `comments-${issueId}.json`), "utf8"),
+  ) as { comments: { id: string; content: string }[] }
+  return stored.comments
+}
+
+describe("FpService.ensureMilestoneComment", () => {
+  test("creates the comment when no comment carries the marker, through a body file", async () => {
+    const comments = await markedComments(CHILD_B)
+    expect(comments).toHaveLength(1)
+    // fp stores the body without its trailing newline; the dash-led first
+    // line survives because the body travelled as a file, not an argument.
+    expect(comments[0]?.content).toBe(BODY.trimEnd())
+    const writes = await writeCalls()
+    expect(writes).toHaveLength(3)
+    expect(writes[0]).toBe(`comment list ${CHILD_B} --format json`)
+    expect(writes[1]).toMatch(
+      new RegExp(`^comment add ${CHILD_B} --file .*/body\\.md$`),
+    )
+    expect(writes[2]).toBe(`comment list ${CHILD_B} --format json`)
+  })
+
+  test("leaves an identical comment alone, so a retry writes nothing", async () => {
+    await markedComments(CHILD_B)
+    await rm(logPath, { force: true })
+    await run(
+      withService((service) =>
+        service.ensureMilestoneComment(project, CHILD_B, MARKER, BODY),
+      ),
+    )
+    expect(await writeCalls()).toEqual([
+      `comment list ${CHILD_B} --format json`,
+    ])
+  })
+
+  test("updates the marked comment in place when its content differs, never adding a second one", async () => {
+    await markedComments(CHILD_B)
+    // An unrelated newer comment must not be mistaken for the marked one.
+    await run(
+      withService((service) =>
+        service.ensureMilestoneComment(
+          project,
+          CHILD_B,
+          "ready-for-agent:pull-request:wi-123",
+          "PR opened.\n\nready-for-agent:pull-request:wi-123",
+        ),
+      ),
+    )
+    await rm(logPath, { force: true })
+    const revised = `Work resumed.\n\n${MARKER}`
+    await run(
+      withService((service) =>
+        service.ensureMilestoneComment(project, CHILD_B, MARKER, revised),
+      ),
+    )
+    const stored = JSON.parse(
+      await readFile(
+        join(fixturesDirectory, `comments-${CHILD_B}.json`),
+        "utf8",
+      ),
+    ) as { comments: { id: string; content: string }[] }
+    expect(stored.comments).toHaveLength(2)
+    expect(
+      stored.comments.find((comment) => comment.content.includes(MARKER)),
+    ).toMatchObject({ id: "comment-1", content: revised })
+    const writes = await writeCalls()
+    expect(writes[1]).toMatch(/^comment update comment-1 --file /)
+  })
+
+  test("rejects an empty marker or body before touching fp", async () => {
+    const noMarker = await failureOf(
+      withService((service) =>
+        service.ensureMilestoneComment(project, CHILD_B, " ", BODY),
+      ),
+    )
+    expect(noMarker.message).toContain("was empty")
+    const noBody = await failureOf(
+      withService((service) =>
+        service.ensureMilestoneComment(project, CHILD_B, MARKER, ""),
+      ),
+    )
+    expect(noBody.message).toContain("was empty")
+    expect(await writeCalls()).toEqual([])
+  })
+
+  test("reports an Issue that does not exist as issue_not_found", async () => {
+    const error = await failureOf(
+      withService((service) =>
+        service.ensureMilestoneComment(project, "nope", MARKER, BODY),
+      ),
+    )
+    expect(error.kind).toBe("issue_not_found")
+  })
+
+  test("fails as write_not_applied when fp reports the comment added but it is not there", async () => {
+    await marker("silent")
+    const error = await failureOf(
+      withService((service) =>
+        service.ensureMilestoneComment(project, CHILD_B, MARKER, BODY),
+      ),
+    )
+    expect(error.kind).toBe("write_not_applied")
+    expect(error.message).toContain("no comment with its marker")
+  })
+
+  test("fails as write_not_applied when fp reports the comment updated but the content did not change", async () => {
+    await markedComments(CHILD_B)
+    await marker("silent")
+    const error = await failureOf(
+      withService((service) =>
+        service.ensureMilestoneComment(
+          project,
+          CHILD_B,
+          MARKER,
+          `Changed.\n\n${MARKER}`,
+        ),
+      ),
+    )
+    expect(error.kind).toBe("write_not_applied")
+    expect(error.message).toContain("different content")
+  })
+
+  test("removes the temporary body file after fp has read it", async () => {
+    await markedComments(CHILD_B)
+    const addCall = (await writeCalls()).find((line) =>
+      line.startsWith("comment add "),
+    )
+    const path = addCall?.split(" --file ")[1]
+    expect(path).toBeDefined()
+    await expect(readFile(path as string, "utf8")).rejects.toThrow()
   })
 })
