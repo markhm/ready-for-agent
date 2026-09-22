@@ -1,13 +1,17 @@
-import { access } from "node:fs/promises"
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { Duration, Effect, Layer, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { FpRequestError } from "./errors.js"
 import {
+  type FpComment,
   type FpListIssue,
   type FpShowIssue,
   classifyFpFailure,
   fpIssueLabels,
   parseFpAuthStatus,
+  parseFpCommentList,
   parseFpIssueList,
   parseFpIssueShow,
   parseFpProjectRemote,
@@ -84,6 +88,65 @@ const directoryExists = (path: string): Effect.Effect<boolean> =>
     Effect.map(() => true),
     Effect.orElseSucceed(() => false),
   )
+
+/**
+ * A comment body goes to fp through a file: the positional message parses a
+ * leading `-` as a flag, and `--file -` does not read stdin (0.25.0). The
+ * file is private to the operator and removed once fp has read it.
+ */
+const withBodyFile = <A, E>(
+  body: string,
+  use: (path: string) => Effect.Effect<A, E>,
+): Effect.Effect<A, E | FpRequestError> =>
+  Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: async () => {
+        const directory = await mkdtemp(join(tmpdir(), "fp-comment-"))
+        const path = join(directory, "body.md")
+        await writeFile(path, body, { mode: 0o600 })
+        return { directory, path }
+      },
+      catch: (cause) =>
+        requestError(
+          "Could not write the fp comment body to a temporary file.",
+          { kind: "unknown" },
+          cause,
+        ),
+    }),
+    (file) => use(file.path),
+    (file) =>
+      Effect.tryPromise(() =>
+        rm(file.directory, { recursive: true, force: true }),
+      ).pipe(Effect.ignore),
+  )
+
+/**
+ * fp stores comment content trimmed at both ends (0.25.0: `content.trim()`
+ * on add and update), inner whitespace kept; compare what fp would store.
+ */
+const storedContent = (text: string): string => text.trim()
+
+const escapeRegExp = (text: string): string =>
+  text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/**
+ * The comment that carries `marker` as a line of its own. A comment that
+ * merely quotes the marker (`> ready-for-agent:...`) is someone else's and
+ * is never the target. `fp comment list` prints newest first; when more
+ * than one comment carries the marker, the oldest is the one the harness
+ * wrote first and the one it keeps updating.
+ */
+const findMarked = (
+  comments: readonly FpComment[],
+  marker: string,
+): FpComment | null => {
+  // `\r` is a line terminator for `$` under the m flag, so CRLF bodies match.
+  const ownLine = new RegExp(`^${escapeRegExp(marker)}$`, "m")
+  return (
+    [...comments].reverse().find((comment) => ownLine.test(comment.content)) ??
+    null
+  )
+}
 
 /**
  * Every operation spawns the fp CLI with the project directory as working
@@ -174,9 +237,11 @@ export const makeFpService = (
           ? `${cwd} is not a registered fp project`
           : kind === "issue_not_found"
             ? "the Issue does not exist"
-            : kind === "invalid_status"
-              ? "the status is not registered in this fp project"
-              : `fp exited with code ${result.exitCode}`
+            : kind === "comment_not_found"
+              ? "the comment no longer exists"
+              : kind === "invalid_status"
+                ? "the status is not registered in this fp project"
+                : `fp exited with code ${result.exitCode}`
       return yield* requestError(`Failed ${describe}: ${detail}.`, {
         ...result,
         kind,
@@ -523,11 +588,97 @@ export const makeFpService = (
     return { _tag: "ready" as const, version, remote: remote.value }
   })
 
+  const updateIssueStatus = Effect.fn("FpService.updateIssueStatus")(function* (
+    projectOptions: FpProjectOptions,
+    issueId: string,
+    status: string,
+  ) {
+    const cwd = projectOptions.projectDirectory
+    const before = yield* showIssue(cwd, issueId)
+    if (before.status === status) {
+      return
+    }
+    // A closed Issue stays closed: completion after a manual close, or a
+    // rejected Issue, is accepted rather than reopened or re-transitioned.
+    if (fpIssueState(before.status, projectOptions) === "CLOSED") {
+      return
+    }
+    const describe = `updating fp issue ${issueId} to status ${status}`
+    yield* runFpOk(
+      cwd,
+      ["issue", "update", issueId, "--status", status],
+      describe,
+    )
+    const after = yield* showIssue(cwd, issueId)
+    if (after.status !== status) {
+      return yield* requestError(
+        `fp reported ${describe}, but the Issue reads back as ${after.status}.`,
+        { kind: "write_not_applied" },
+      )
+    }
+  })
+
+  const listComments = Effect.fn("FpService.listComments")(function* (
+    cwd: string,
+    issueId: string,
+  ) {
+    const describe = `listing comments of fp issue ${issueId}`
+    const result = yield* runFpOk(
+      cwd,
+      ["comment", "list", issueId, "--format", "json"],
+      describe,
+    )
+    return yield* parseOrFail(describe, result, parseFpCommentList)
+  })
+
+  const ensureMilestoneComment = Effect.fn("FpService.ensureMilestoneComment")(
+    function* (
+      projectOptions: FpProjectOptions,
+      issueId: string,
+      marker: string,
+      body: string,
+    ) {
+      if (marker.trim() === "" || body.trim() === "") {
+        return yield* requestError(
+          `fp milestone comment for Issue ${issueId} was empty.`,
+        )
+      }
+      const cwd = projectOptions.projectDirectory
+      const wanted = storedContent(body)
+      const existing = findMarked(yield* listComments(cwd, issueId), marker)
+      if (existing !== null && storedContent(existing.content) === wanted) {
+        return
+      }
+      yield* withBodyFile(body, (path) =>
+        existing === null
+          ? runFpOk(
+              cwd,
+              ["comment", "add", issueId, "--file", path],
+              `adding a milestone comment to fp issue ${issueId}`,
+            )
+          : runFpOk(
+              cwd,
+              ["comment", "update", existing.id, "--file", path],
+              `updating milestone comment ${existing.id} on fp issue ${issueId}`,
+            ),
+      )
+      const written = findMarked(yield* listComments(cwd, issueId), marker)
+      if (written === null || storedContent(written.content) !== wanted) {
+        return yield* requestError(
+          `fp reported the milestone comment on Issue ${issueId} as written, but reading back found ${written === null ? "no comment with its marker" : "different content"}.`,
+          { kind: "write_not_applied" },
+        )
+      }
+    },
+  )
+
   return {
     getAuthenticatedUserLogin,
     listReadyIssues,
     getIssue,
     checkReadiness,
+    updateIssueStatus,
+    ensureMilestoneComment,
   } satisfies FpServiceShape
 }
 
