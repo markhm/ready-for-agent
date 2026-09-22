@@ -26,6 +26,17 @@ export interface FpServiceTestFixture {
     issueId: string,
   ) => Effect.Effect<FpIssueSnapshot, FpRequestError>
   readonly readiness?: FpReadiness
+  readonly updateIssueStatus?: (
+    options: FpProjectOptions,
+    issueId: string,
+    status: string,
+  ) => Effect.Effect<void, FpRequestError>
+  readonly ensureMilestoneComment?: (
+    options: FpProjectOptions,
+    issueId: string,
+    marker: string,
+    body: string,
+  ) => Effect.Effect<void, FpRequestError>
   readonly error?: FpRequestError
 }
 
@@ -58,5 +69,13 @@ export const makeFpServiceTest = (
           remote: { workspaceSlug: "ws-test", projectId: "proj-test" },
         },
       ),
+    updateIssueStatus: (options, issueId, status) =>
+      fixture.updateIssueStatus !== undefined
+        ? fixture.updateIssueStatus(options, issueId, status)
+        : failOr(() => Effect.void),
+    ensureMilestoneComment: (options, issueId, marker, body) =>
+      fixture.ensureMilestoneComment !== undefined
+        ? fixture.ensureMilestoneComment(options, issueId, marker, body)
+        : failOr(() => Effect.void),
   })
 }

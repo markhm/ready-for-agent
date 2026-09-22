@@ -2,6 +2,7 @@ import {
   classifyFpFailure,
   fpIssueLabels,
   parseFpAuthStatus,
+  parseFpCommentList,
   parseFpIssueList,
   parseFpIssueShow,
   parseFpProjectRemote,
@@ -207,5 +208,52 @@ describe("fp failure classification", () => {
       ),
     ).toBe("invalid_status")
     expect(classifyFpFailure("segfault")).toBe("unknown")
+  })
+
+  test("recognises a comment that no longer exists", () => {
+    expect(
+      classifyFpFailure(
+        "Comment 00000000-0000-0000-0000-000000000000 not found\n  Suggestion: Run 'fp comment list <issue-id>' to see available comments\n",
+      ),
+    ).toBe("comment_not_found")
+  })
+})
+
+// Captured from `fp comment list <id> --format json` on fp 0.25.0 (d818046),
+// 2026-09-22: newest comment first, wrapped in `{ "comments": [...] }`.
+const COMMENT_LIST_OUTPUT = JSON.stringify({
+  comments: [
+    {
+      id: "85d226d1-1b2a-4f90-9e4c-e107cf90532c",
+      issueId: "pcunulenyfmmijjvhqpxetdiizkrbpbc",
+      author: "github@hissinkmuller.nl",
+      content:
+        "ready-for-agent:work-started:wi-123\n\n- body starts with a dash\nline two `code`",
+      createdAt: "2026-09-22T13:55:13.224Z",
+    },
+    {
+      id: "f3bfd763-9e57-440f-9eed-47d77946bdff",
+      issueId: "pcunulenyfmmijjvhqpxetdiizkrbpbc",
+      author: "github@hissinkmuller.nl",
+      content: "an earlier comment",
+      createdAt: "2026-09-22T12:26:42.715Z",
+    },
+  ],
+})
+
+describe("fp comment list parsing", () => {
+  test("reads comment ids and content, newest first as fp prints them", () => {
+    const comments = parseFpCommentList(COMMENT_LIST_OUTPUT)
+    expect(comments.map((comment) => comment.id)).toEqual([
+      "85d226d1-1b2a-4f90-9e4c-e107cf90532c",
+      "f3bfd763-9e57-440f-9eed-47d77946bdff",
+    ])
+    expect(comments[0]?.content).toBe(
+      "ready-for-agent:work-started:wi-123\n\n- body starts with a dash\nline two `code`",
+    )
+  })
+
+  test("an Issue without comments parses to an empty list", () => {
+    expect(parseFpCommentList('{"comments":[]}')).toEqual([])
   })
 })

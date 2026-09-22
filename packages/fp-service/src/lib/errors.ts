@@ -3,12 +3,16 @@ import { Schema } from "effect"
 /**
  * Why an fp CLI invocation failed, when known. `issue_not_found` lets
  * discovery drop one vanished Issue instead of failing the poll;
- * `invalid_status` belongs to the execution half (status writes).
+ * `invalid_status` and `comment_not_found` come from writes;
+ * `write_not_applied` is a write fp reported as done that the read-back
+ * did not find.
  */
 export const FpFailureKind = Schema.Literals([
   "project_not_registered",
   "issue_not_found",
+  "comment_not_found",
   "invalid_status",
+  "write_not_applied",
   "timeout",
   "spawn_failed",
   "unreadable_output",

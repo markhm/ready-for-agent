@@ -46,6 +46,29 @@ export interface FpServiceShape {
   readonly checkReadiness: (
     projectDirectory: string,
   ) => Effect.Effect<FpReadiness>
+  /**
+   * Move one Issue to a registered status. An Issue already in that status,
+   * or already closed by the project's closed statuses, is accepted without
+   * a write. The write is verified by reading the Issue back, because fp
+   * reports success on some writes it did not perform.
+   */
+  readonly updateIssueStatus: (
+    options: FpProjectOptions,
+    issueId: string,
+    status: string,
+  ) => Effect.Effect<void, FpServiceError>
+  /**
+   * Ensure one comment carrying `marker` exists on the Issue with exactly
+   * `body`: created when absent, updated when its content differs, left
+   * alone when identical, so retries never duplicate it. Verified by
+   * reading the comments back.
+   */
+  readonly ensureMilestoneComment: (
+    options: FpProjectOptions,
+    issueId: string,
+    marker: string,
+    body: string,
+  ) => Effect.Effect<void, FpServiceError>
 }
 
 export class FpService extends Context.Service<FpService, FpServiceShape>()(
