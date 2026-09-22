@@ -15,6 +15,17 @@ export class IssueNotFoundError extends Schema.TaggedErrorClass<IssueNotFoundErr
   {
     repositoryId: Schema.String,
     issueNumber: Schema.Finite,
+    nativeId: Schema.optionalKey(Schema.String),
+  },
+) {}
+
+/** More than one live Issue shares this number under the current tracker. */
+export class IssueIdentityAmbiguousError extends Schema.TaggedErrorClass<IssueIdentityAmbiguousError>()(
+  "IssueIdentityAmbiguousError",
+  {
+    repositoryId: Schema.String,
+    issueNumber: Schema.Finite,
+    message: Schema.String,
   },
 ) {}
 

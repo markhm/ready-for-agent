@@ -4,6 +4,10 @@ import type { SqlError } from "effect/unstable/sql/SqlError"
 import { ulid } from "ulidx"
 import { isSelectableAgentBackendId } from "@ready-for-agent/agent-backend"
 import {
+  isIssueTracker,
+  persistedIssueIdentity,
+} from "@ready-for-agent/lifecycle-model"
+import {
   AgentBackendChangeBlockedError,
   DatabaseError,
   GuaranteedMinAgentTurnsExceedsCapError,
@@ -39,6 +43,8 @@ import {
   IssueDependencySqlRow,
   IssueRecord,
   IssueSqlRow,
+  IssueTracker,
+  LinearTeamWorkflowSelection,
   RepositoryId,
   RepositoryRecord,
   RepositorySettingsConfigSqlRow,
@@ -52,6 +58,7 @@ import {
   type UpdateRepositorySettingsInput,
   WorkItemPullRequest,
   WorkItemPullRequestSqlRow,
+  defaultIssueTrackerForForge,
   emptyBackendModelPrefs,
 } from "./types.js"
 
@@ -346,21 +353,54 @@ const decodeRunningStepRows = (rows: ReadonlyArray<unknown>) =>
     Effect.mapError(toSchemaDatabaseError),
   )
 
-const repositorySelectColumns = `id, forge, forge_host, project_path, local_path, is_bare, paused,
+const repositorySelectColumns = `id, forge, issue_tracker, forge_host, project_path, local_path, is_bare, paused,
              selected_agent_backend, default_model, default_thinking_level,
              review_model, review_thinking_level, backend_model_prefs, merge_policy,
              guaranteed_min_concurrent_agent_turns,
              include_all_issue_authors, wait_for_ready_for_review_checks,
+             linear_project_id, linear_project_name, linear_workflow_statuses,
              issues_reconciled_at`
 
-const issueSelectColumns = `id, repository_id, issue_number, title, body, url, state,
+const issueSelectColumns = `id, repository_id, issue_number, issue_tracker,
+                issue_native_id, issue_display_id, title, body, url, state,
                 github_created_at, issue_author, parent_issue_number,
-                parent_issue_url, parent_position, has_children`
+                parent_issue_url, parent_native_id, parent_display_id,
+                parent_position, has_children`
+
+const completeIssueReference = (
+  reference: IssueDependency,
+): IssueDependency => {
+  const identity = persistedIssueIdentity({
+    issueNumber: reference.issueNumber,
+    nativeId: reference.nativeId,
+    displayId: reference.displayId,
+  })
+  return {
+    issueNumber: reference.issueNumber,
+    issueUrl: reference.issueUrl,
+    nativeId: identity.nativeId,
+    displayId: identity.displayId,
+  }
+}
+
+const parseLinearWorkflowStatuses = (
+  raw: string,
+): readonly LinearTeamWorkflowSelection[] => {
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Schema.decodeUnknownSync(Schema.Array(LinearTeamWorkflowSelection))(
+      parsed,
+    )
+  } catch {
+    return []
+  }
+}
 
 const toRepositoryRecord = (row: RepositorySqlRow): RepositoryRecord =>
   RepositoryRecord.make({
     id: row.id,
     forge: row.forge,
+    issueTracker: row.issueTracker,
     forgeHost: row.forgeHost,
     projectPath: row.projectPath,
     localPath: row.localPath,
@@ -375,33 +415,50 @@ const toRepositoryRecord = (row: RepositorySqlRow): RepositoryRecord =>
     guaranteedMinConcurrentAgentTurns: row.guaranteedMinConcurrentAgentTurns,
     includeAllIssueAuthors: row.includeAllIssueAuthors,
     waitForReadyForReviewChecks: row.waitForReadyForReviewChecks,
+    linearProjectId: row.linearProjectId,
+    linearProjectName: row.linearProjectName,
+    linearWorkflowStatuses: parseLinearWorkflowStatuses(
+      row.linearWorkflowStatuses,
+    ),
     issuesReconciledAt: row.issuesReconciledAt,
   })
 
 const toIssueRecord = (
   row: IssueSqlRow,
   blockedBy: readonly IssueDependency[],
-): IssueRecord => ({
-  id: row.id,
-  repositoryId: row.repositoryId,
-  issueNumber: row.issueNumber,
-  title: row.title,
-  body: row.body,
-  url: row.url,
-  state: row.state,
-  githubCreatedAt: new Date(row.githubCreatedAt),
-  issueAuthor: row.issueAuthor,
-  parentPosition: row.parentPosition,
-  hasChildren: row.hasChildren,
-  parent:
-    row.parentIssueNumber === null || row.parentIssueUrl === null
-      ? null
-      : {
-          issueNumber: row.parentIssueNumber,
-          issueUrl: row.parentIssueUrl,
-        },
-  blockedBy,
-})
+): IssueRecord => {
+  const identity = persistedIssueIdentity({
+    issueNumber: row.issueNumber,
+    nativeId: row.nativeId,
+    displayId: row.displayId,
+  })
+  return {
+    id: row.id,
+    repositoryId: row.repositoryId,
+    issueNumber: row.issueNumber,
+    issueTracker: row.issueTracker,
+    nativeId: identity.nativeId,
+    displayId: identity.displayId,
+    title: row.title,
+    body: row.body,
+    url: row.url,
+    state: row.state,
+    githubCreatedAt: new Date(row.githubCreatedAt),
+    issueAuthor: row.issueAuthor,
+    parentPosition: row.parentPosition,
+    hasChildren: row.hasChildren,
+    parent:
+      row.parentIssueNumber === null || row.parentIssueUrl === null
+        ? null
+        : completeIssueReference({
+            issueNumber: row.parentIssueNumber,
+            issueUrl: row.parentIssueUrl,
+            nativeId: row.parentNativeId ?? "",
+            displayId: row.parentDisplayId ?? "",
+          }),
+    blockedBy: blockedBy.map(completeIssueReference),
+  }
+}
 
 export interface DbServiceShape {
   readonly repositoryChanges: Stream.Stream<void>
@@ -564,6 +621,11 @@ export interface DbServiceShape {
   readonly deleteIssue: (
     repositoryId: string,
     issueNumber: number,
+  ) => Effect.Effect<void, RepositoryNotFoundError | DatabaseError>
+  readonly deleteIssueByNativeId: (
+    repositoryId: string,
+    issueTracker: IssueTracker,
+    nativeId: string,
   ) => Effect.Effect<void, RepositoryNotFoundError | DatabaseError>
   /**
    * Record reconciliation completion. Does not publish `issueChanges`; call
@@ -1160,17 +1222,18 @@ export const DbServiceLive = Layer.effect(
       const result = yield* sql
         .unsafe(
           `INSERT INTO repository (
-               id, forge, forge_host, project_path, local_path, is_bare, paused,
+               id, forge, issue_tracker, forge_host, project_path, local_path, is_bare, paused,
                selected_agent_backend,
                default_model, default_thinking_level, review_model, review_thinking_level,
                backend_model_prefs,
                merge_policy, include_all_issue_authors, wait_for_ready_for_review_checks,
                created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, '{}', ?, ?, ?, ?, ?)
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, '{}', ?, ?, ?, ?, ?)
              RETURNING ${repositorySelectColumns}`,
           [
             id,
             input.forge,
+            defaultIssueTrackerForForge(input.forge),
             forgeHost,
             projectPath,
             localPath,
@@ -1348,11 +1411,15 @@ export const DbServiceLive = Layer.effect(
             const existingRows = yield* sql
               .unsafe(
                 `SELECT forge,
+                        issue_tracker AS issueTracker,
                         forge_host AS forgeHost,
                         project_path AS projectPath,
                         selected_agent_backend AS selectedAgentBackend,
                         backend_model_prefs AS backendModelPrefs,
-                        guaranteed_min_concurrent_agent_turns AS guaranteedMinConcurrentAgentTurns
+                        guaranteed_min_concurrent_agent_turns AS guaranteedMinConcurrentAgentTurns,
+                        linear_project_id AS linearProjectId,
+                        linear_project_name AS linearProjectName,
+                        linear_workflow_statuses AS linearWorkflowStatuses
                  FROM repository WHERE id = ?`,
                 [input.repositoryId],
               )
@@ -1366,6 +1433,120 @@ export const DbServiceLive = Layer.effect(
               })
             }
             const nextForge = input.forge ?? existing.forge
+            const nextIssueTracker =
+              input.issueTracker ??
+              (existing.issueTracker === existing.forge
+                ? nextForge
+                : existing.issueTracker)
+            // Every Issue Tracker kind decides here whether it may be
+            // selected; a kind added to the vocabulary without a decision
+            // fails compilation instead of being persisted unimplemented.
+            switch (nextIssueTracker) {
+              case "github":
+              case "gitlab":
+              case "azure-devops":
+                if (
+                  nextIssueTracker !== nextForge &&
+                  nextIssueTracker !== existing.issueTracker
+                ) {
+                  return yield* new InvalidRepositorySettingsError({
+                    field: "issueTracker",
+                    message:
+                      "Forge-hosted Issue Trackers must match the Repository hosting Forge",
+                  })
+                }
+                break
+              case "linear":
+                if (nextForge !== "github") {
+                  return yield* new InvalidRepositorySettingsError({
+                    field: "issueTracker",
+                    message:
+                      "Linear is available only for GitHub-hosted Repositories",
+                  })
+                }
+                break
+              case "fp":
+                return yield* new InvalidRepositorySettingsError({
+                  field: "issueTracker",
+                  message: "fp is not yet available as an Issue Tracker",
+                })
+              default: {
+                const _exhaustive: never = nextIssueTracker
+                return _exhaustive
+              }
+            }
+            const existingLinearWorkflowStatuses = parseLinearWorkflowStatuses(
+              existing.linearWorkflowStatuses,
+            )
+            let nextLinearProjectId =
+              input.linearProjectId === undefined
+                ? existing.linearProjectId
+                : input.linearProjectId === null ||
+                    input.linearProjectId.trim() === ""
+                  ? null
+                  : input.linearProjectId.trim()
+            let nextLinearProjectName =
+              input.linearProjectName === undefined
+                ? existing.linearProjectName
+                : input.linearProjectName === null ||
+                    input.linearProjectName.trim() === ""
+                  ? null
+                  : input.linearProjectName.trim()
+            let nextLinearWorkflowStatuses =
+              input.linearWorkflowStatuses === undefined
+                ? existingLinearWorkflowStatuses
+                : input.linearWorkflowStatuses
+            if (nextIssueTracker !== "linear") {
+              nextLinearProjectId = null
+              nextLinearProjectName = null
+              nextLinearWorkflowStatuses = []
+            }
+            if (nextIssueTracker === "linear") {
+              if (nextLinearProjectId === null) {
+                return yield* new InvalidRepositorySettingsError({
+                  field: "linearProjectId",
+                  message: "Select a Linear project mapped to this Repository",
+                })
+              }
+              if (nextLinearWorkflowStatuses.length === 0) {
+                return yield* new InvalidRepositorySettingsError({
+                  field: "linearWorkflowStatuses",
+                  message:
+                    "Choose In Progress and Done statuses for each Linear team",
+                })
+              }
+              for (const selection of nextLinearWorkflowStatuses) {
+                if (
+                  selection.teamId.trim() === "" ||
+                  selection.inProgressStateId.trim() === "" ||
+                  selection.doneStateId.trim() === ""
+                ) {
+                  return yield* new InvalidRepositorySettingsError({
+                    field: "linearWorkflowStatuses",
+                    message:
+                      "Each Linear team needs In Progress and Done statuses",
+                  })
+                }
+              }
+              const mappedRows = (yield* sql
+                .unsafe(
+                  `SELECT id FROM repository
+                   WHERE linear_project_id = ?
+                     AND id <> ?
+                   LIMIT 1`,
+                  [nextLinearProjectId, input.repositoryId],
+                )
+                .pipe(Effect.mapError(toDatabaseError))) as readonly {
+                readonly id: string
+              }[]
+              if (mappedRows.length > 0) {
+                return yield* new InvalidRepositorySettingsError({
+                  field: "linearProjectId",
+                  message:
+                    "That Linear project is already mapped to another Repository",
+                })
+              }
+            }
             const nextForgeHost = requestedForgeHost ?? existing.forgeHost
             const nextProjectPath = requestedProjectPath ?? existing.projectPath
             const identityChanging =
@@ -1488,6 +1669,7 @@ export const DbServiceLive = Layer.effect(
               .unsafe(
                 `UPDATE repository
              SET forge = ?,
+                 issue_tracker = ?,
                  forge_host = ?,
                  project_path = ?,
                  paused = ?,
@@ -1501,11 +1683,15 @@ export const DbServiceLive = Layer.effect(
                  guaranteed_min_concurrent_agent_turns = ?,
                  include_all_issue_authors = ?,
                  wait_for_ready_for_review_checks = ?,
+                 linear_project_id = ?,
+                 linear_project_name = ?,
+                 linear_workflow_statuses = ?,
                  updated_at = ?
              WHERE id = ?
              RETURNING ${repositorySelectColumns}`,
                 [
                   nextForge,
+                  nextIssueTracker,
                   nextForgeHost,
                   nextProjectPath,
                   input.paused,
@@ -1519,6 +1705,9 @@ export const DbServiceLive = Layer.effect(
                   nextGuaranteedMin,
                   input.includeAllIssueAuthors,
                   input.waitForReadyForReviewChecks,
+                  nextLinearProjectId,
+                  nextLinearProjectName,
+                  JSON.stringify(nextLinearWorkflowStatuses),
                   now,
                   input.repositoryId,
                 ],
@@ -2101,6 +2290,30 @@ export const DbServiceLive = Layer.effect(
           message: "issueNumber must be a positive integer",
         })
       }
+      if (
+        input.issueTracker !== undefined &&
+        !isIssueTracker(input.issueTracker)
+      ) {
+        return yield* new InvalidIssueInputError({
+          field: "issueTracker",
+          message: "issueTracker must be a supported Issue Tracker",
+        })
+      }
+      if (input.nativeId !== undefined && input.nativeId.trim().length === 0) {
+        return yield* new InvalidIssueInputError({
+          field: "nativeId",
+          message: "nativeId cannot be empty",
+        })
+      }
+      if (
+        input.displayId !== undefined &&
+        input.displayId.trim().length === 0
+      ) {
+        return yield* new InvalidIssueInputError({
+          field: "displayId",
+          message: "displayId cannot be empty",
+        })
+      }
       if (input.title.trim().length === 0) {
         return yield* new InvalidIssueInputError({
           field: "title",
@@ -2167,6 +2380,32 @@ export const DbServiceLive = Layer.effect(
       }
 
       yield* ensureRepositoryExists(input.repositoryId)
+      const trackerRows = yield* sql
+        .unsafe(`SELECT issue_tracker FROM repository WHERE id = ? LIMIT 1`, [
+          input.repositoryId,
+        ])
+        .pipe(Effect.mapError(toDatabaseError))
+      const decodedTracker = yield* Schema.decodeUnknownEffect(
+        Schema.Array(
+          Schema.Struct({ issueTracker: IssueTracker }).pipe(
+            Schema.encodeKeys({ issueTracker: "issue_tracker" }),
+          ),
+        ),
+      )(trackerRows).pipe(Effect.mapError(toSchemaDatabaseError))
+      const repositoryTracker = decodedTracker[0]?.issueTracker
+      if (repositoryTracker === undefined) {
+        return yield* new DatabaseError({
+          message: `Repository ${input.repositoryId} has an invalid Issue Tracker`,
+        })
+      }
+      const issueTracker = input.issueTracker ?? repositoryTracker
+      const identity = persistedIssueIdentity({
+        issueNumber: input.issueNumber,
+        nativeId: input.nativeId?.trim(),
+        displayId: input.displayId?.trim(),
+      })
+      const parent =
+        input.parent === null ? null : completeIssueReference(input.parent)
 
       const now = yield* Clock.currentTimeMillis
       return yield* sql
@@ -2180,12 +2419,18 @@ export const DbServiceLive = Layer.effect(
             const result = yield* sql
               .unsafe(
                 `INSERT INTO issue (
-               id, repository_id, issue_number, title, body, url, state,
+               id, repository_id, issue_number, issue_tracker,
+                issue_native_id, issue_display_id, title, body, url, state,
                 github_created_at, issue_author, parent_issue_number,
-                 parent_issue_url, parent_position, has_children,
+                 parent_issue_url, parent_native_id, parent_display_id,
+                 parent_position, has_children,
                  created_at, updated_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT (repository_id, issue_number) DO UPDATE SET
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (repository_id, issue_tracker, issue_native_id) DO UPDATE SET
+               issue_number = excluded.issue_number,
+               issue_tracker = excluded.issue_tracker,
+               issue_native_id = excluded.issue_native_id,
+               issue_display_id = excluded.issue_display_id,
                title = excluded.title,
                body = excluded.body,
                url = excluded.url,
@@ -2194,6 +2439,8 @@ export const DbServiceLive = Layer.effect(
                  issue_author = excluded.issue_author,
                  parent_issue_number = excluded.parent_issue_number,
                  parent_issue_url = excluded.parent_issue_url,
+                 parent_native_id = excluded.parent_native_id,
+                 parent_display_id = excluded.parent_display_id,
                  parent_position = excluded.parent_position,
                  has_children = excluded.has_children,
                  updated_at = excluded.updated_at
@@ -2202,14 +2449,19 @@ export const DbServiceLive = Layer.effect(
                   `issue-${ulid()}`,
                   input.repositoryId,
                   input.issueNumber,
+                  issueTracker,
+                  identity.nativeId,
+                  identity.displayId,
                   input.title,
                   input.body,
                   input.url,
                   input.state,
                   input.githubCreatedAt.getTime(),
                   issueAuthor,
-                  input.parent?.issueNumber ?? null,
-                  input.parent?.issueUrl ?? null,
+                  parent?.issueNumber ?? null,
+                  parent?.issueUrl ?? null,
+                  parent?.nativeId ?? null,
+                  parent?.displayId ?? null,
                   input.parentPosition,
                   input.hasChildren,
                   now,
@@ -2233,7 +2485,7 @@ export const DbServiceLive = Layer.effect(
               ...new Map(
                 input.blockedBy.map((dependency) => [
                   dependency.issueUrl,
-                  dependency,
+                  completeIssueReference(dependency),
                 ]),
               ).values(),
             ].sort(
@@ -2246,13 +2498,16 @@ export const DbServiceLive = Layer.effect(
                 .unsafe(
                   `INSERT INTO issue_dependency (
                  id, issue_id, blocking_issue_number,
-                 blocking_issue_url, created_at
-               ) VALUES (?, ?, ?, ?, ?)`,
+                 blocking_issue_url, blocking_native_id, blocking_display_id,
+                 created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
                   [
                     `issue-dependency-${ulid()}`,
                     row.id,
                     dependency.issueNumber,
                     dependency.issueUrl,
+                    dependency.nativeId,
+                    dependency.displayId,
                     now,
                   ],
                 )
@@ -2289,7 +2544,8 @@ export const DbServiceLive = Layer.effect(
       const dependencyRows = yield* sql
         .unsafe(
           `SELECT d.issue_id, d.blocking_issue_number,
-               d.blocking_issue_url
+               d.blocking_issue_url, d.blocking_native_id,
+               d.blocking_display_id
              FROM issue_dependency d
              INNER JOIN issue i ON i.id = d.issue_id
              WHERE i.repository_id = ?
@@ -2302,10 +2558,14 @@ export const DbServiceLive = Layer.effect(
       const dependenciesByIssue = new Map<string, IssueDependency[]>()
       for (const dependency of dependencies) {
         const records = dependenciesByIssue.get(dependency.issueId) ?? []
-        records.push({
-          issueNumber: dependency.issueNumber,
-          issueUrl: dependency.issueUrl,
-        })
+        records.push(
+          completeIssueReference({
+            issueNumber: dependency.issueNumber,
+            issueUrl: dependency.issueUrl,
+            nativeId: dependency.nativeId,
+            displayId: dependency.displayId,
+          }),
+        )
         dependenciesByIssue.set(dependency.issueId, records)
       }
 
@@ -2388,6 +2648,33 @@ export const DbServiceLive = Layer.effect(
         .pipe(Effect.mapError(toDatabaseError))
     })
 
+    const deleteIssueByNativeId = Effect.fn("DbService.deleteIssueByNativeId")(
+      function* (
+        repositoryId: string,
+        issueTracker: IssueTracker,
+        nativeId: string,
+      ) {
+        yield* ensureRepositoryExists(repositoryId)
+        yield* sql
+          .unsafe(
+            `DELETE FROM issue_dependency
+             WHERE issue_id IN (
+               SELECT id FROM issue
+               WHERE repository_id = ? AND issue_tracker = ? AND issue_native_id = ?
+             )`,
+            [repositoryId, issueTracker, nativeId],
+          )
+          .pipe(Effect.mapError(toDatabaseError))
+        yield* sql
+          .unsafe(
+            `DELETE FROM issue
+             WHERE repository_id = ? AND issue_tracker = ? AND issue_native_id = ?`,
+            [repositoryId, issueTracker, nativeId],
+          )
+          .pipe(Effect.mapError(toDatabaseError))
+      },
+    )
+
     const markIssuesReconciled = Effect.fn("DbService.markIssuesReconciled")(
       function* (repositoryId: string, reconciledAt: Date) {
         const now = yield* Clock.currentTimeMillis
@@ -2448,6 +2735,7 @@ export const DbServiceLive = Layer.effect(
       listWorkItemPullRequests,
       listUnfinishedCreatePrWorkItems,
       deleteIssue,
+      deleteIssueByNativeId,
       markIssuesReconciled,
     })
   }),

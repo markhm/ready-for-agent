@@ -1,7 +1,11 @@
 import { dirname } from "node:path"
 import { Effect, FileSystem, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
-import { AgentBackend, agentBackendLabel } from "@ready-for-agent/agent-backend"
+import {
+  AgentBackend,
+  agentBackendLabel,
+  spawnOwned,
+} from "@ready-for-agent/agent-backend"
 import type { LifecycleStepContext } from "./lifecycle-steps.js"
 import {
   PreCommitInvalidWorktreeContextError,
@@ -11,6 +15,7 @@ import {
   PreCommitWorktreeContextMissingError,
 } from "./pre-commit-errors.js"
 import { repositoryProcessOptions } from "./repository-process-environment.js"
+import { loadScopeHandoff } from "./scope-handoff.js"
 import { DEFAULT_LIFECYCLE_MAX_DURATIONS } from "./types.js"
 
 const resolveWorktreePath = (context: LifecycleStepContext) =>
@@ -71,7 +76,7 @@ const runGitInWorktree = (cwd: string, args: ReadonlyArray<string>) =>
 
     return yield* Effect.scoped(
       Effect.gen(function* () {
-        const handle = yield* spawner.spawn(command)
+        const handle = yield* spawnOwned(spawner, command)
         const [exitCode, stdout, stderr] = yield* Effect.all(
           [
             handle.exitCode,
@@ -121,6 +126,7 @@ const buildFixPrompt = (exitCode: number, logPath: string) =>
     "2. Returns only a concise summary of what failed and what to fix (no raw hook logs)",
     "Use that summary to diagnose and fix the failures in this worktree so pre-commit can pass.",
     "When re-checking, use a sub-agent again for the same reason; only bring back pass/fail plus a short failure summary.",
+    "Keep repairs limited to the failed checks within the agreed scope. The harness owns full review; these delegates verify checks, not the entire feature.",
     "Do not create a git commit or open a pull request.",
   ].join("\n")
 
@@ -135,10 +141,11 @@ const askOpencodeToFix = (
     Effect.gen(function* () {
       const logPath = yield* writeHookOutputLog(context.workItemId, output)
       const agentBackend = yield* AgentBackend
+      const scopeHandoff = yield* loadScopeHandoff(context, worktreePath)
       yield* agentBackend
         .continueTurn({
           sessionId,
-          prompt: buildFixPrompt(exitCode, logPath),
+          prompt: `${buildFixPrompt(exitCode, logPath)}\n\n${scopeHandoff}`,
           cwd: worktreePath,
           model: context.model,
           thinkingLevel: context.thinkingLevel,

@@ -59,6 +59,20 @@ type Query {
   """
   ciGateCatalog(repositoryId: ID!): CiGateCatalog!
   """
+  Personal Linear API key status for the operator. Independent of GitHub
+  Repository credentials.
+  """
+  linearCredential: LinearCredential!
+  """
+  Linear projects visible to the stored personal API key.
+  """
+  linearProjects: [LinearProject!]!
+  """
+  Team-specific workflow states for one Linear project, with suggested
+  In Progress and Done defaults.
+  """
+  linearProjectWorkflow(projectId: ID!): [LinearTeamWorkflow!]!
+  """
   Agent Models available from the Active Agent Backend, each with optional
   Thinking Levels. Empty thinkingLevels means the model has no Thinking Levels.
   Empty when the backend is unavailable.
@@ -66,7 +80,7 @@ type Query {
   models: [AgentModel!]!
   issues(repositoryId: ID!): [Issue!]!
   """
-  Work Items for a repository (or one issue when issueNumber is set).
+  Work Items for a repository (or one issue when nativeId is set).
   Omit listKind/limit for the full list (backward-compatible default).
   listKind WORKING: unfinished Work Items (including retryable failed or
   interrupted Step Runs) plus Needs Human (no history cap from the Jobs card).
@@ -79,7 +93,7 @@ type Query {
   """
   workItems(
     repositoryId: ID!
-    issueNumber: Int
+    nativeId: String
     listKind: WorkItemsListKind
     limit: Int
   ): [WorkItem!]!
@@ -662,6 +676,11 @@ type RepositoryCiGate {
 type Repository {
   id: ID!
   forge: String!
+  """
+  Configured Issue Tracker. Defaults to the Repository's hosting Forge when
+  the Repository is added.
+  """
+  issueTracker: String!
   forgeHost: String!
   projectPath: String!
   localPath: String!
@@ -732,6 +751,63 @@ type Repository {
   and does not close ordinary work.
   """
   ciGate: RepositoryCiGate!
+  """
+  Mapped Linear project id when Issue Tracker is Linear.
+  """
+  linearProjectId: String
+  linearProjectName: String
+  """
+  Per-team In Progress and Done statuses for Linear close-out.
+  """
+  linearWorkflowStatuses: [LinearTeamWorkflowSelection!]!
+}
+
+type LinearCredential {
+  configured: Boolean!
+  secretName: String!
+  creationUrl: String!
+}
+
+type LinearProject {
+  id: ID!
+  name: String!
+  url: String
+}
+
+type LinearWorkflowState {
+  id: ID!
+  name: String!
+  type: String!
+  position: Float!
+}
+
+type LinearTeamWorkflow {
+  teamId: ID!
+  teamKey: String!
+  teamName: String!
+  states: [LinearWorkflowState!]!
+  suggestedInProgressStateId: String
+  suggestedDoneStateId: String
+}
+
+type LinearTeamWorkflowSelection {
+  teamId: ID!
+  teamKey: String!
+  teamName: String!
+  inProgressStateId: String!
+  inProgressStateName: String!
+  doneStateId: String!
+  doneStateName: String!
+}
+
+input LinearTeamWorkflowSelectionInput {
+  teamId: ID!
+  teamKey: String!
+  teamName: String!
+  inProgressStateId: String!
+  inProgressStateName: String!
+  doneStateId: String!
+  doneStateName: String!
 }
 
 type LocalRepositoryInspection {
@@ -758,6 +834,20 @@ type Issue {
   id: ID!
   repositoryId: ID!
   issueNumber: Int!
+  """
+  Configured Issue Tracker that sourced this Issue. Distinct from the
+  Repository hosting Forge when they later diverge.
+  """
+  issueTracker: String!
+  """
+  Tracker-native identity. Existing Forge Issues use the issue number as
+  text; not required to be a positive integer.
+  """
+  nativeId: String!
+  """
+  Human-readable identifier, distinct from native identity.
+  """
+  displayId: String!
   title: String!
   body: String!
   url: String!
@@ -772,6 +862,8 @@ type Issue {
 type IssueReference {
   issueNumber: Int!
   issueUrl: String!
+  nativeId: String!
+  displayId: String!
 }
 
 type RefreshJob {
@@ -793,6 +885,8 @@ qualifies for Implement Now or Queue.
 """
 type IntakeCandidate {
   issueNumber: Int!
+  nativeId: String!
+  displayId: String!
   title: String!
   url: String!
   action: RepositoryIntakeAction!
@@ -800,7 +894,7 @@ type IntakeCandidate {
 
 """
 Ordered Intake Candidates for one Repository. Candidate order is Implement Now
-by ascending Issue number, then Queue by ascending Issue number.
+by display identifier, then Queue by display identifier.
 """
 type RepositoryIntakeCandidates {
   repository: Repository!
@@ -822,6 +916,8 @@ Successful Intake of one Issue through ordinary Implement Now or Queue.
 """
 type RepositoryIntakeCreated {
   issueNumber: Int!
+  nativeId: String!
+  displayId: String!
   title: String!
   url: String!
   action: RepositoryIntakeAction!
@@ -834,6 +930,8 @@ candidates; earlier Work Items are not rolled back.
 """
 type RepositoryIntakeFailed {
   issueNumber: Int!
+  nativeId: String!
+  displayId: String!
   title: String!
   url: String!
   action: RepositoryIntakeAction!
@@ -857,13 +955,13 @@ type RepositoryIntakeResult {
 }
 
 """
-Exactly one of issueNumber, workItemId, or allRetryable=true must be set.
+Exactly one of nativeId, workItemId, or allRetryable=true must be set.
 """
 input RetryWorkItemsSelector {
   """
-  Retry the current unfinished Work Item for this Issue number.
+  Retry the current unfinished Work Item for this Issue Native Identity.
   """
-  issueNumber: Int
+  nativeId: String
   """
   Retry this Work Item after verifying it belongs to the selected Repository.
   """
@@ -1085,10 +1183,26 @@ type StepRunReason {
   retryAt: String
 }
 
+"""
+Original Issue Source captured on a Work Item. Native identity is
+tracker-scoped and is not required to be a positive integer.
+"""
+type IssueSource {
+  tracker: String!
+  nativeId: String!
+  displayId: String!
+  url: String!
+}
+
 type WorkItem {
   id: ID!
   repositoryId: ID!
   issueNumber: Int!
+  """
+  Original Issue Source captured at creation. Survives later Repository
+  Issue Tracker changes. Other Issue contents remain live.
+  """
+  issueSource: IssueSource!
   issueTitle: String
   pullRequestNumber: Int
   """
@@ -1243,6 +1357,14 @@ input UpdateRepositorySettingsInput {
   must exist in the current live catalog.
   """
   selectedCiGateDefinitionIdentities: [String!]
+  """
+  Configured Issue Tracker. Omitted leaves the stored tracker unchanged.
+  Linear is available only for GitHub-hosted Repositories.
+  """
+  issueTracker: String
+  linearProjectId: String
+  linearProjectName: String
+  linearWorkflowStatuses: [LinearTeamWorkflowSelectionInput!]
 }
 
 type Mutation {
@@ -1271,15 +1393,20 @@ type Mutation {
   azure-devops, account <project-path>) and activate Issue Polling.
   """
   addRepositoryAzureDevOpsToken(repositoryId: ID!): RepositoryCredential!
+  """
+  Store a personal Linear API key in Keymaxxer, independently of GitHub
+  credentials, and activate Issue Polling for Linear-tracked Repositories.
+  """
+  addLinearApiKey: LinearCredential!
   removeRepository(repositoryId: ID!): ID!
   refreshRepository(repositoryId: ID!): RefreshJob!
-  implementNow(repositoryId: ID!, issueNumber: Int!): WorkItem!
+  implementNow(repositoryId: ID!, nativeId: String!): WorkItem!
   """
   Create a Work Item authorized as CI Repair for the active Closed CI Failure
   Incident. Fails when no Closed incident is active. Competes for ordinary
   Worker Slots and does not bypass Work Item-local PR safety.
   """
-  implementCiRepair(repositoryId: ID!, issueNumber: Int!): WorkItem!
+  implementCiRepair(repositoryId: ID!, nativeId: String!): WorkItem!
   """
   Authorize an unfinished Work Item as CI Repair for the active Closed incident
   without resetting worktree, Session, profile, Merge Policy, PR, or history.
@@ -1297,14 +1424,14 @@ type Mutation {
   """
   implementWith(
     repositoryId: ID!
-    issueNumber: Int!
+    nativeId: String!
     profile: ExplicitWorkItemExecutionProfileInput!
     options: ImplementWithOptionsInput
   ): [WorkItem!]!
   """
   Create a Work Item that runs local steps through Review, then pauses before Commit.
   """
-  implementLocally(repositoryId: ID!, issueNumber: Int!): WorkItem!
+  implementLocally(repositoryId: ID!, nativeId: String!): WorkItem!
   """
   Parent-level Implement all with auto-merge. Snapshots open direct Child Issues
   and atomically enrolls them: creates ordinary Work Items with Merge Mode ALWAYS
@@ -1315,12 +1442,12 @@ type Mutation {
   handoff stays stopped. Returns covered child Work Items. Does not create a
   Parent Work Item.
   """
-  implementAllWithAutoMerge(repositoryId: ID!, issueNumber: Int!): [WorkItem!]!
+  implementAllWithAutoMerge(repositoryId: ID!, nativeId: String!): [WorkItem!]!
   """
   Queue a Relevant open leaf Issue that has listed blockers: creates a Work Item
   in Waiting for blockers (no Worker Slot, no Step Run).
   """
-  queue(repositoryId: ID!, issueNumber: Int!): WorkItem!
+  queue(repositoryId: ID!, nativeId: String!): WorkItem!
   """
   Synchronous best-effort Repository Intake: reclassify current Intake
   Candidates for one Repository, run one shared Repository preflight when the

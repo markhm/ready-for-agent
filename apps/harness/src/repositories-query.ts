@@ -7,7 +7,10 @@
  */
 
 import { type Forge, isForge } from "@ready-for-agent/lifecycle-model"
+import type { RepositoryCiGateStatus } from "./ci-gate-status-label.js"
 import { createHarnessGraphqlClient } from "./harness-graphql.js"
+
+export { ciGateStatusLabel } from "./ci-gate-status-label.js"
 
 const graphql = createHarnessGraphqlClient({ batch: true })
 
@@ -29,19 +32,6 @@ const FORGE_DISPLAY_NAMES: Record<Forge, string> = {
 export const forgeDisplayName = (forge: Forge): string =>
   FORGE_DISPLAY_NAMES[forge]
 
-export const ciGateStatusLabel = (status: RepositoryCiGateStatus): string => {
-  switch (status) {
-    case "DISABLED":
-      return "Disabled"
-    case "OPEN":
-      return "Open"
-    case "CLOSED":
-      return "Closed"
-    case "DEGRADED":
-      return "Degraded"
-  }
-}
-
 export const decodeForge = (value: unknown): Forge => {
   if (isForge(value)) {
     return value
@@ -55,8 +45,6 @@ type CiGateDefinition = {
   kind: string
   diagnosticMetadata: string | null
 }
-
-export type RepositoryCiGateStatus = "DISABLED" | "OPEN" | "CLOSED" | "DEGRADED"
 
 type RepositoryCiGate = {
   enabled: boolean
@@ -103,9 +91,20 @@ type RepositoryCiGate = {
   } | null
 }
 
+type LinearTeamWorkflowSelection = {
+  teamId: string
+  teamKey: string
+  teamName: string
+  inProgressStateId: string
+  inProgressStateName: string
+  doneStateId: string
+  doneStateName: string
+}
+
 export type Repository = {
   id: string
   forge: Forge
+  issueTracker: string
   forgeHost: string
   projectPath: string
   localPath: string
@@ -122,6 +121,9 @@ export type Repository = {
   waitForReadyForReviewChecks: boolean
   selectedCiGateDefinitions: readonly CiGateDefinition[]
   ciGate: RepositoryCiGate
+  linearProjectId: string | null
+  linearProjectName: string | null
+  linearWorkflowStatuses: readonly LinearTeamWorkflowSelection[]
   issuesReconciledAt: string | null
   blockingUnfinishedWorkItemCount: number
   credential: RepositoryCredential
@@ -138,6 +140,7 @@ export const repositoriesQuery = {
       repositories: {
         id: true,
         forge: true,
+        issueTracker: true,
         forgeHost: true,
         projectPath: true,
         localPath: true,
@@ -152,6 +155,17 @@ export const repositoriesQuery = {
         mergePolicy: true,
         includeAllIssueAuthors: true,
         waitForReadyForReviewChecks: true,
+        linearProjectId: true,
+        linearProjectName: true,
+        linearWorkflowStatuses: {
+          teamId: true,
+          teamKey: true,
+          teamName: true,
+          inProgressStateId: true,
+          inProgressStateName: true,
+          doneStateId: true,
+          doneStateName: true,
+        },
         selectedCiGateDefinitions: {
           identity: true,
           displayLabel: true,

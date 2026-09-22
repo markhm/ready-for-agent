@@ -5,8 +5,8 @@ Opinionated agentic software engineering harness that works Forge issues into pu
 ## Language
 
 **Forge**:
-A code-hosting platform kind the harness supports as a Repository's source of git hosting, Issues, and Pull Requests: GitHub, GitLab, or Azure DevOps. A Repository belongs to exactly one Forge, chosen when the Repository is added. Azure DevOps now has the same end-to-end lifecycle as GitHub and GitLab: remote detection, PAT-based authentication, Ready Issue listing/reconciliation (including native Predecessor/Successor blocking links, surfaced as blockedBy), draft Pull Request creation, PR Status Checks (build validation / branch policy evaluations), merge, and work item close-out with a completion summary are all implemented.
-_Avoid_: Provider (overloaded with model provider and credential metadata), issue source (too narrow — the Forge also hosts Pull Requests and checks), platform
+A code-hosting platform kind the harness supports as a Repository's source of git hosting and Pull Requests: GitHub, GitLab, or Azure DevOps. A Repository belongs to exactly one Forge, chosen when the Repository is added. Each Forge is also that Repository's default Issue Tracker; Linear and fp are not Forges. Azure DevOps now has the same end-to-end lifecycle as GitHub and GitLab: remote detection, PAT-based authentication, Ready Issue listing/reconciliation (including native Predecessor/Successor blocking links, surfaced as blockedBy), draft Pull Request creation, PR Status Checks (build validation / branch policy evaluations), merge, and work item close-out with a completion summary are all implemented.
+_Avoid_: Provider (overloaded with model provider and credential metadata), issue source (Issue tracking is independently configurable; the Issue Tracker is the issue source), platform
 
 **Forge Host**:
 The hostname of the Forge instance serving a Repository — `github.com` for GitHub, or a self-managed GitLab instance such as `git.drupalcode.org`. It is part of Repository identity: the same Project Path on two different Forge Hosts denotes two different Repositories. The git remote's hostname is not authoritative for the Forge Host — an instance may serve SSH on a different hostname (git.drupal.org vs git.drupalcode.org).
@@ -17,7 +17,7 @@ The Forge's own slash-separated path addressing the project within its Forge Hos
 _Avoid_: Owner/repo pair (cannot express nested GitLab paths), clone URL (too many spellings for one project)
 
 **Repository**:
-A project on a Forge the harness is configured to work on, identified by Forge, Forge Host, and Project Path (case-insensitive identity; display casing preserved). One row per configured Repository identity; the harness keeps a single local clone of it (bare or working). Displayed as its Project Path — no separate display label. Forge, Forge Host, and Project Path are guessed from the local clone's remote when the Repository is added, verified against the Forge API, and may be corrected in Repository settings; changing them is rejected while any Work Item exists for the Repository.
+A project on a Forge the harness is configured to work on, identified by Forge, Forge Host, and Project Path (case-insensitive identity; display casing preserved). One row per configured Repository identity; the harness keeps a single local clone of it (bare or working). Displayed as its Project Path — no separate display label. Forge, Forge Host, and Project Path are guessed from the local clone's remote when the Repository is added, verified against the Forge API, and may be corrected in Repository settings; changing them is rejected while any Work Item exists for the Repository. Adding a Repository automatically selects its hosting Forge as the Issue Tracker.
 _Avoid_: Repo (in formal docs), target, project, checkout
 
 **End-to-End Fixture Repository**:
@@ -29,7 +29,7 @@ A Repository state in which the harness does not autonomously select work for th
 _Avoid_: Disabled, inactive, enabled=false, Pause Work Item
 
 **Repository settings**:
-Per-Repository operator preferences: Paused, selected CI Gate Definitions, optional Agent Backend override, optional build Agent Model selection, optional review Agent Model selection, Merge Policy, optional guaranteed-minimum concurrent Agent Turns floor (`guaranteedMinConcurrentAgentTurns`, null by default), Include all Issue Authors, and Wait for checks to start after ready for review (`waitForReadyForReviewChecks`, default true). Forge identity (Forge, Forge Host, and Project Path) is also corrected through Repository settings, subject to the Work Item gate described under Repository. An absent Agent Backend override inherits the Harness Config default Agent Backend. Build and review model selections are backend-scoped: each Agent Backend has its own optional overrides. An absent build model inherits the whole Harness build selection for the Repository's effective Agent Backend; an absent review model inherits the Harness review selection for that backend and then the resolved build selection; an explicit model with no Thinking Level uses that model's backend default. For a Work Item without an Explicit Work Item Execution Profile, build and review selections are resolved at each Agent Turn from current backend-scoped Repository settings falling back to backend-scoped Harness Config for the Work Item's captured Agent Backend, so a model settings change affects the next turn without rewriting the Work Item. Changing the Agent Backend override is rejected while the Repository has an unfinished Work Item whose routing depends on that effective backend; an unfinished Work Item with an Explicit Work Item Execution Profile does not block the change. An absent guaranteed-minimum Agent Turns floor is fully fair-share, identical to a Repository that never had one; setting or raising it is rejected when the sum of every Repository's floor would exceed Harness Config's `maxConcurrentAgentTurns`.
+Per-Repository operator preferences: Paused, selected CI Gate Definitions, optional Agent Backend override, optional build Agent Model selection, optional review Agent Model selection, Merge Policy, optional guaranteed-minimum concurrent Agent Turns floor (`guaranteedMinConcurrentAgentTurns`, null by default), Include all Issue Authors, Wait for checks to start after ready for review (`waitForReadyForReviewChecks`, default true), Issue Tracker (a GitHub-hosted Repository may later select Linear), optional Linear project mapping, and team-specific Linear In Progress/Done workflow statuses. Forge identity (Forge, Forge Host, and Project Path) is also corrected through Repository settings, subject to the Work Item gate described under Repository. Adding a Repository still selects the hosting Forge as the Issue Tracker with no extra onboarding choice. An absent Agent Backend override inherits the Harness Config default Agent Backend. Build and review model selections are backend-scoped: each Agent Backend has its own optional overrides. An absent build model inherits the whole Harness build selection for the Repository's effective Agent Backend; an absent review model inherits the Harness review selection for that backend and then the resolved build selection; an explicit model with no Thinking Level uses that model's backend default. For a Work Item without an Explicit Work Item Execution Profile, build and review selections are resolved at each Agent Turn from current backend-scoped Repository settings falling back to backend-scoped Harness Config for the Work Item's captured Agent Backend, so a model settings change affects the next turn without rewriting the Work Item. Changing the Agent Backend override is rejected while the Repository has an unfinished Work Item whose routing depends on that effective backend; an unfinished Work Item with an Explicit Work Item Execution Profile does not block the change. An absent guaranteed-minimum Agent Turns floor is fully fair-share, identical to a Repository that never had one; setting or raising it is rejected when the sum of every Repository's floor would exceed Harness Config's `maxConcurrentAgentTurns`.
 _Avoid_: Project config, repo config file
 
 **CI Gate Definition**:
@@ -77,11 +77,11 @@ A boolean Repository setting (default false for new and existing Repositories) t
 _Avoid_: Show all authors, mine only toggle (as a separate UI control)
 
 **Issue Author**:
-The Forge username of the user who opened an Issue, when the Forge provides one (the GitHub login or GitLab username); otherwise null. Fetched with Ready-labeled Issues, stored on the local Issue record, and used for author-scoped relevance when Include all Issue Authors is off.
-_Avoid_: Assignee, reporter (unless matching the Forge’s author field)
+The Issue Tracker's identifier of the user who opened an Issue, when the tracker provides one (the GitHub login, GitLab username, Azure DevOps display name, or Linear user id); otherwise null. Fetched with Ready-labeled Issues, stored on the local Issue record, and used for author-scoped relevance when Include all Issue Authors is off. Assignment does not substitute for authorship.
+_Avoid_: Assignee, reporter (unless matching the tracker’s author field)
 
 **Operator Forge User**:
-The Forge username of the authenticated principal for a Repository’s Forge credential path (Keymaxxer-injected token or ambient Forge CLI auth). Resolved via the Forge API viewer endpoint for that token during reconciliation when Include all Issue Authors is off; not a separate harness user account.
+The authenticated principal for a Repository’s Issue Tracker credential path (Keymaxxer-injected token or ambient CLI/env auth). For Forge-hosted trackers this is the Forge username; for Linear it is the Linear user id. Resolved via the tracker’s viewer endpoint during reconciliation when Include all Issue Authors is off; not a separate harness user account.
 _Avoid_: Harness user, local operator account
 
 **Harness GitHub Operation**:
@@ -96,19 +96,35 @@ _Avoid_: Global GitHub queue, rate limiter
 A process-local flow-control condition established only by explicit GitHub throttle evidence. It closes GitHub Operation Coordinator admission until `retryAt`, immediately returns that deadline to pending and new Harness GitHub Operations, and clears when the deadline elapses. It reacts to GitHub’s stated limit; it does not reserve quota or perform proactive quota budgeting.
 _Avoid_: Rate limited, quota budget
 
+**Issue Tracker**:
+A platform kind the harness uses as a Repository's source of Issues, independently of the Repository's Forge: GitHub, GitLab, Azure DevOps, Linear, or fp. Linear and fp are Issue Trackers only and are not code-hosting Forges. fp is Fiberplane's local-first issue tracker, reached through the fp CLI in a registered project directory; it is in the vocabulary ahead of its adapter and cannot yet be selected in Repository settings. A Repository has exactly one configured Issue Tracker; adding a Repository selects the hosting Forge's default without an extra onboarding choice.
+_Avoid_: Forge (when referring to issue tracking), Linear as a Forge, provider
+
+**Issue Native Identity**:
+The Issue Tracker's own durable identifier for an Issue, scoped to that Issue's Original Issue Source. Distinct from the Issue Display Identifier and URL; not required to be a positive integer.
+_Avoid_: issue number (too GitHub-specific as the only identity), iid (GitLab-specific)
+
+**Issue Display Identifier**:
+The human-readable identifier shown for an Issue, such as a GitHub issue number or a Linear issue key. It may change without changing Issue Native Identity.
+_Avoid_: Issue Native Identity, URL
+
+**Original Issue Source**:
+The Issue Tracker and Issue Native Identity captured on a Work Item at creation, together with the Issue Display Identifier and URL needed for historical references. Issue operations for that Work Item resolve against this source after the Repository's Issue Tracker setting changes. Other Issue contents remain live rather than snapshotted.
+_Avoid_: current tracker setting, issue snapshot
+
 **Issue**:
-An issue on the Repository's Forge, identified within that Repository by a positive integer issue number (the iid in GitLab) and represented locally with its title, body, web URL, creation time, Forge state, and optional Issue Author. The harness may retain a local representation for later use, but the Forge remains authoritative. GitLab issues and merge requests come from separate per-project number sequences, so a bare GitLab number is ambiguous across the two kinds — unlike GitHub's single shared sequence.
+An issue on the Repository's configured Issue Tracker, identified by a source-scoped Issue Native Identity distinct from its Issue Display Identifier and URL, and represented locally with its title, body, web URL, creation time, tracker state, and optional Issue Author. The harness may retain a local representation for later use, but the Issue Tracker remains authoritative. Existing Forge-hosted Issues still use a positive integer issue number (the iid in GitLab) as both native identity and display identifier. GitLab issues and merge requests come from separate per-project number sequences, so a bare GitLab number is ambiguous across the two kinds — unlike GitHub's single shared sequence.
 _Avoid_: Ticket, task (unless referring to a broader concept)
 
 **Issue store**:
 The harness capability that retains the Repository's current working set of Relevant Issue representations locally. It does not fetch, refresh, or establish the authoritative state of Issues.
 
 **Issue Reconciler**:
-The sole harness capability that changes the Issue store, deriving one Repository's Relevant Issues from the Forge's authoritative set of Ready-labeled Issues. Issues that are not Relevant, including Issues whose ready label was removed, are absent from the Issue store after reconciliation.
+The sole harness capability that changes the Issue store, deriving one Repository's Relevant Issues from the configured Issue Tracker's authoritative set of Ready-labeled Issues. Issues that are not Relevant, including Issues whose ready label was removed, are absent from the Issue store after reconciliation.
 _Avoid_: GitHub Reconciler (too broad), Issue Synchronizer (suggests bidirectional updates)
 
 **Refresh Job**:
-A durable request for the Issue Reconciler to reconcile one Repository. Acceptance of a Refresh Job does not mean reconciliation has completed. After reconciliation succeeds, competing active Issue-closing PRs stop eligible unfinished Work Items to Needs Human; then unfinished Work Items that own a Work Item PR are inspected for merge outcomes and, for certain Needs Human handoffs, mergeability: a merged PR advances local cleanup toward Complete (including Work Items paused because the Issue closed while the PR was open); closed-unmerged Abandon applies when the latest step was Decide PR Merge, Merge PR, or Resolve PR Merge Conflict; Decide/Merge Needs Human with a conflicting open PR advances to Resolve PR Merge Conflict; Resolve Needs Human whose open PR is no longer conflicting advances to Watch PR Status Checks. Refresh does not auto-Start a Work Item paused for a closed Issue with an open PR. After those owned-PR inspections, unfinished Attention Work Items that do not own a Work Item PR and whose Issue is no longer Relevant (closed, unlabelled, or gone from the Issue store) advance local cleanup toward Complete without posting an Issue comment; running Step Runs and Waiting for blockers are unchanged.
+A durable request for the Issue Reconciler to reconcile one Repository. Acceptance of a Refresh Job does not mean reconciliation has completed. After reconciliation succeeds, competing active Issue-closing PRs stop eligible unfinished Work Items to Needs Human; then unfinished Work Items that own a Work Item PR are inspected for merge outcomes and, for certain Needs Human handoffs, mergeability: a merged PR advances Close Issue when the Original Issue Source is Linear, otherwise local cleanup, toward Complete (including Work Items paused because the Issue closed while the PR was open); closed-unmerged Abandon applies when the latest step was Decide PR Merge, Merge PR, or Resolve PR Merge Conflict; Decide/Merge Needs Human with a conflicting open PR advances to Resolve PR Merge Conflict; Resolve Needs Human whose open PR is no longer conflicting advances to Watch PR Status Checks. Refresh does not auto-Start a Work Item paused for a closed Issue with an open PR. After those owned-PR inspections, unfinished Attention Work Items that do not own a Work Item PR and whose Issue is no longer Relevant (closed, unlabelled, or gone from the Issue store) advance local cleanup toward Complete without posting an Issue comment; running Step Runs and Waiting for blockers are unchanged.
 _Avoid_: Refresh (ambiguous between the request and its execution), sync job
 
 **Issue Polling**:
@@ -260,7 +276,7 @@ An Issue with no children: either a Standalone Issue or a Child Issue. Only Leaf
 _Avoid_: Actionable Issue (actionability also depends on workflow constraints)
 
 **Work Item**:
-A durable record of one operator-requested attempt to complete a Leaf Issue's objective through the work lifecycle, capturing an Agent Backend as provenance and routing authority, an optional Explicit Work Item Execution Profile, and an optional Work Item Merge Policy pin (`null` inherits the live Repository Merge Policy). Without an explicit profile, each Agent Turn resolves build and review selections from current backend-scoped Repository settings falling back to Harness Config. With one, the profile's build selection is used for Implement, Review Fix Rounds, Commit, and related steps, while its review selection is used only for reviewing passes inside Review. It references the current Issue by Repository and issue number, captures the Issue title for identification after the Issue leaves the Issue store, records canonical publication title and body after Commit generates them (agent-authored when valid, with in-directory image links rewritten to GitHub user-attachment URLs before persist, otherwise harness fallback copy from the Issue identity; shared by git commit and draft PR), records the exact identity of its pull request when one is created, and records the completion summary for a No-Change Outcome. Other Issue contents remain live rather than snapshotted. A Leaf Issue may produce multiple Work Items over time, but at most one may be unfinished at a time.
+A durable record of one operator-requested attempt to complete a Leaf Issue's objective through the work lifecycle, capturing an Agent Backend as provenance and routing authority, an optional Explicit Work Item Execution Profile, and an optional Work Item Merge Policy pin (`null` inherits the live Repository Merge Policy). Without an explicit profile, each Agent Turn resolves build and review selections from current backend-scoped Repository settings falling back to Harness Config. With one, the profile's build selection is used for Implement, Review Fix Rounds, Commit, and related steps, while its review selection is used only for reviewing passes inside Review. It captures the Original Issue Source and the Issue title for identification after the Issue leaves the Issue store, retains the positive integer issue number for existing Forge-hosted Issues, records canonical publication title and body after Commit generates them (agent-authored when valid, with in-directory image links rewritten to GitHub user-attachment URLs before persist, otherwise harness fallback copy from the Issue identity; shared by git commit and draft PR), records the exact identity of its pull request when one is created, and records the completion summary for a No-Change Outcome. Other Issue contents remain live rather than snapshotted. A Leaf Issue may produce multiple Work Items over time, but at most one may be unfinished at a time.
 _Avoid_: Issue lifecycle, implementation job, attempt
 
 **Explicit Work Item Execution Profile**:
@@ -308,7 +324,7 @@ A successful Review outcome in which a Review Rerun Assessment determines, with 
 _Avoid_: Clean review, skipped review, deferred finding
 
 **Cleared Review Outcome**:
-A successful Review outcome in which the build model rejects all low- or medium-severity Review Findings as invalid without changing the worktree. It advances to Commit with a recorded rationale; high-severity findings cannot be cleared this way.
+A successful Review outcome in which the build model clears all Review Findings of any reported severity without product changes, citing evidence that they are disproven, pre-existing and outside the agreed scope, or covered by an explicit operator-accepted limitation. It advances to Commit with a recorded rationale; valid unresolved high-severity findings still require human attention.
 _Avoid_: Clean review, deferred finding, fixed finding
 
 **Review Fix Round**:
@@ -328,7 +344,7 @@ The Lifecycle Step after successful Review that creates the local git commit for
 _Avoid_: Create PR, git commit hook, Pre-Commit
 
 **Close Issue**:
-The Lifecycle Step that publishes the No-Change Outcome's completion summary on the Work Item's Issue and closes that Issue after Assess Changes or a confirmed late No-Change Outcome from Commit. It precedes local cleanup so the remote completion outcome is preserved even when cleanup must be retried.
+The Lifecycle Step that publishes a completion summary on the Work Item's Issue and closes that Issue. It runs after a confirmed No-Change Outcome from Assess Changes or Commit, and after a confirmed GitHub merge when the Original Issue Source is Linear. It precedes local cleanup so the remote completion outcome is preserved even when cleanup must be retried. An already-closed or already-completed Issue is accepted; retries reuse the existing summary instead of duplicating it.
 _Avoid_: Complete Work Item, local cleanup
 
 **Worker Slot**:
@@ -416,7 +432,7 @@ The Lifecycle Step that changes a Work Item PR from draft to ready for review af
 The Lifecycle Step that decides whether a settled Work Item PR may be merged by the harness or requires a human.
 
 **Merge PR**:
-The Lifecycle Step that revalidates and merges an approved Work Item PR through its Forge. On Azure DevOps, a complete request that is still queued is in-flight merge work, not a Merge Revalidation Outcome or a rejected merge. After a successful merge on Azure DevOps, if the Forge Issue is still open, Merge PR completes it to that type's Completed-category state and posts the hidden-marker completion summary once; an already completed Boards item is left in state.
+The Lifecycle Step that revalidates and merges an approved Work Item PR through its Forge. On Azure DevOps, a complete request that is still queued is in-flight merge work, not a Merge Revalidation Outcome or a rejected merge. After a successful merge on Azure DevOps, if the Forge Issue is still open, Merge PR completes it to that type's Completed-category state and posts the hidden-marker completion summary once; an already completed Boards item is left in state. When the Original Issue Source is Linear, a successful merge advances to Close Issue rather than local cleanup so tracker close-out can retry independently of the confirmed GitHub merge.
 
 
 **local cleanup**:

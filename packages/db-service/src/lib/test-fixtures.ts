@@ -1,6 +1,10 @@
 import { Effect, Layer, Stream } from "effect"
 import { DbService, type DbServiceShape } from "./db-service.js"
-import { RepositoryId, type RepositoryRecord } from "./types.js"
+import {
+  RepositoryId,
+  type RepositoryRecord,
+  defaultIssueTrackerForForge,
+} from "./types.js"
 
 const unused = () => Effect.die("not used")
 
@@ -11,26 +15,34 @@ export const testRepositoryId = RepositoryId.make(
 
 export const makeRepositoryRecord = (
   overrides: Partial<RepositoryRecord> = {},
-): RepositoryRecord => ({
-  id: testRepositoryId,
-  forge: "github",
-  forgeHost: "github.com",
-  projectPath: "acme/widgets",
-  localPath: "/repos/acme/widgets",
-  isBare: true,
-  paused: false,
-  selectedAgentBackend: null,
-  defaultModel: null,
-  defaultThinkingLevel: null,
-  reviewModel: null,
-  reviewThinkingLevel: null,
-  mergePolicy: "off",
-  guaranteedMinConcurrentAgentTurns: null,
-  includeAllIssueAuthors: false,
-  waitForReadyForReviewChecks: true,
-  issuesReconciledAt: null,
-  ...overrides,
-})
+): RepositoryRecord => {
+  const { forge: forgeOverride, issueTracker, ...rest } = overrides
+  const forge = forgeOverride ?? "github"
+  return {
+    id: testRepositoryId,
+    forge,
+    issueTracker: issueTracker ?? defaultIssueTrackerForForge(forge),
+    forgeHost: "github.com",
+    projectPath: "acme/widgets",
+    localPath: "/repos/acme/widgets",
+    isBare: true,
+    paused: false,
+    selectedAgentBackend: null,
+    defaultModel: null,
+    defaultThinkingLevel: null,
+    reviewModel: null,
+    reviewThinkingLevel: null,
+    mergePolicy: "off",
+    guaranteedMinConcurrentAgentTurns: null,
+    includeAllIssueAuthors: false,
+    waitForReadyForReviewChecks: true,
+    linearProjectId: null,
+    linearProjectName: null,
+    linearWorkflowStatuses: [],
+    issuesReconciledAt: null,
+    ...rest,
+  }
+}
 
 export const stubDbService = (
   overrides: Partial<DbServiceShape> = {},
@@ -89,6 +101,7 @@ export const stubDbService = (
   listWorkItemPullRequests: unused,
   listUnfinishedCreatePrWorkItems: unused,
   deleteIssue: unused,
+  deleteIssueByNativeId: unused,
   markIssuesReconciled: unused,
   ...overrides,
 })

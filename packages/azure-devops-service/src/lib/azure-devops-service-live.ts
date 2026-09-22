@@ -23,6 +23,7 @@ import {
   type PullRequestMergeability,
   type TerminalPrStatusCheck,
   extractErrorCode,
+  isDecisiveCiGateObservedRun,
 } from "@ready-for-agent/forge-contract"
 import {
   AzureDevOpsService,
@@ -557,9 +558,16 @@ const toReadyLabeledIssue = (
   const blockedBy = [...blockerIds]
     .filter((id) => isOpenState(stateById.get(id)))
     .sort((left, right) => left - right)
-    .map((id) => ({ number: id, url: workItemUrl(identity, id) }))
+    .map((id) => ({
+      number: id,
+      nativeId: String(id),
+      displayId: String(id),
+      url: workItemUrl(identity, id),
+    }))
   return {
     number: item.id,
+    nativeId: String(item.id),
+    displayId: String(item.id),
     title: fields["System.Title"] ?? "",
     body: fields["System.Description"] ?? "",
     url: workItemUrl(identity, item.id),
@@ -1594,6 +1602,7 @@ export const makeAzureDevOpsService = (options: {
         }
       }
       const runs: CiGateObservedRun[] = []
+      let reachedLastSeen = false
       const buildsPath = `/${encodeURIComponent(identity.project)}/_apis/build/builds?definitions=${String(definitionId)}&branchName=${encodeURIComponent(gitRepository.defaultBranch)}&queryOrder=QueueTimeDescending&$top=${String(CI_GATE_PAGE_SIZE)}`
       yield* collectCiGatePages(
         identity.organization,
@@ -1615,10 +1624,18 @@ export const makeAzureDevOpsService = (options: {
               lastRunIdentity !== null &&
               isSameObservedRun(mapped.runIdentity, lastRunIdentity)
             ) {
+              reachedLastSeen = true
+              if (isDecisiveCiGateObservedRun(mapped)) {
+                return "stop"
+              }
+              continue
+            }
+            if (reachedLastSeen && isDecisiveCiGateObservedRun(mapped)) {
               return "stop"
             }
           }
           // First observation (no last-seen run) uses one official API page.
+          // An unfinished last-seen run is not a stable cursor.
           return lastRunIdentity === null ? "stop" : "continue"
         },
       )

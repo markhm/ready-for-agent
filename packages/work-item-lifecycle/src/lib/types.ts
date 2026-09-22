@@ -2,6 +2,7 @@ import { Schema } from "effect"
 import { ulid } from "ulidx"
 import {
   DEFAULT_LIFECYCLE_MAX_DURATIONS,
+  type IssueSource,
   type LifecycleMaxDurations,
   OperationalLifecycleStep,
   STEP_RUN_REASON,
@@ -9,6 +10,7 @@ import {
   TerminalWorkItemState,
   WorkItemState,
   evaluateUnfinishedWorkItem,
+  formatIssueDisplayId,
 } from "@ready-for-agent/lifecycle-model"
 import type { ExplicitWorkItemExecutionProfile } from "./execution-profile.js"
 import {
@@ -18,6 +20,7 @@ import {
   JOBS_COMPLETED_WINDOW_MS,
 } from "./jobs-completed-window.js"
 
+export type { IssueSource } from "@ready-for-agent/lifecycle-model"
 export {
   STEP_RUN_REASON,
   type StepRunReasonCode,
@@ -125,6 +128,7 @@ export interface WorkItemRecord {
   readonly id: WorkItemId
   readonly repositoryId: string
   readonly issueNumber: number
+  readonly issueSource: IssueSource
   readonly issueTitle: string | null
   readonly pullRequestNumber: number | null
   /**
@@ -203,15 +207,15 @@ export const WAITING_FOR_WORKER_SLOT_MESSAGE =
 
 /**
  * Operator-facing copy for Waiting for blockers.
- * Lists live blocker numbers when provided; otherwise a generic hold message.
+ * Lists live blocker display identifiers when provided; otherwise a generic hold.
  */
 export const formatWaitingForBlockersMessage = (
-  blockerIssueNumbers: readonly number[] = [],
+  blockerDisplayIds: readonly string[] = [],
 ): string => {
-  if (blockerIssueNumbers.length === 0) {
+  if (blockerDisplayIds.length === 0) {
     return "Queued — waiting for blockers"
   }
-  const listed = blockerIssueNumbers.map((n) => `#${n}`).join(", ")
+  const listed = blockerDisplayIds.map(formatIssueDisplayId).join(", ")
   return `Queued — waiting for ${listed}`
 }
 

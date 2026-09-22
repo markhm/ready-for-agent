@@ -23,6 +23,7 @@ import {
   stubActiveAgentBackendLayer,
   stubAzureDevOpsServiceLayer,
   stubGitLabServiceLayer,
+  stubLinearServiceLayer,
   syncNeedsHumanMergeHandoffs,
 } from "../src/index.js"
 import { describe, expect, it } from "bun:test"
@@ -184,6 +185,7 @@ describe("syncNeedsHumanMergeHandoffs", () => {
       ),
       Layer.provideMerge(stubGitLabServiceLayer(gitlab)),
       Layer.provideMerge(stubAzureDevOpsServiceLayer(azureDevOps)),
+      Layer.provideMerge(stubLinearServiceLayer()),
       Layer.provideMerge(
         Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
       ),
@@ -277,7 +279,7 @@ describe("syncNeedsHumanMergeHandoffs", () => {
         hasChildren: false,
         blockedBy: [],
       })
-      const created = yield* lifecycle.implementNow(repository.id, 42)
+      const created = yield* lifecycle.implementNow(repository.id, "42")
       for (let index = 0; index < 8; index += 1) {
         yield* makeQueuedJobsAvailable
         yield* claimAndRunPending
@@ -329,7 +331,7 @@ describe("syncNeedsHumanMergeHandoffs", () => {
       hasChildren: false,
       blockedBy: [],
     })
-    const created = yield* lifecycle.implementNow(repository.id, 42)
+    const created = yield* lifecycle.implementNow(repository.id, "42")
     for (let index = 0; index < 8; index += 1) {
       yield* makeQueuedJobsAvailable
       yield* claimAndRunPending
@@ -669,7 +671,7 @@ describe("syncNeedsHumanMergeHandoffs", () => {
       hasChildren: false,
       blockedBy: [],
     })
-    const created = yield* lifecycle.implementNow(repository.id, 42)
+    const created = yield* lifecycle.implementNow(repository.id, "42")
     for (let index = 0; index < 8; index += 1) {
       yield* makeQueuedJobsAvailable
       yield* claimAndRunPending
@@ -760,7 +762,7 @@ describe("syncNeedsHumanMergeHandoffs", () => {
           hasChildren: false,
           blockedBy: [],
         })
-        const created = yield* lifecycle.implementNow(repository.id, 2116)
+        const created = yield* lifecycle.implementNow(repository.id, "2116")
         for (let index = 0; index < 8; index += 1) {
           yield* makeQueuedJobsAvailable
           yield* claimAndRunPending
@@ -880,7 +882,7 @@ describe("syncNeedsHumanMergeHandoffs", () => {
           hasChildren: false,
           blockedBy: [],
         })
-        const created = yield* lifecycle.implementNow(repository.id, 532)
+        const created = yield* lifecycle.implementNow(repository.id, "532")
         for (let index = 0; index < 8; index += 1) {
           yield* makeQueuedJobsAvailable
           yield* claimAndRunPending
@@ -984,7 +986,7 @@ describe("syncNeedsHumanMergeHandoffs", () => {
       hasChildren: false,
       blockedBy: [],
     })
-    const created = yield* lifecycle.implementNow(repository.id, 42)
+    const created = yield* lifecycle.implementNow(repository.id, "42")
     // create…create_pr (8) + watch→resolve + resolve→needs_human
     for (let index = 0; index < 10; index += 1) {
       yield* makeQueuedJobsAvailable
@@ -1209,7 +1211,7 @@ describe("syncNeedsHumanMergeHandoffs", () => {
           hasChildren: false,
           blockedBy: [],
         })
-        const created = yield* lifecycle.implementNow(repository.id, 532)
+        const created = yield* lifecycle.implementNow(repository.id, "532")
         for (let index = 0; index < 8; index += 1) {
           yield* makeQueuedJobsAvailable
           yield* claimAndRunPending

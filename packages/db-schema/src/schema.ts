@@ -9,6 +9,7 @@ import {
 import { ulid } from "ulidx"
 import {
   FORGES,
+  ISSUE_TRACKERS,
   OPERATIONAL_LIFECYCLE_STEPS,
   WORK_ITEM_STATES,
 } from "@ready-for-agent/lifecycle-model"
@@ -20,6 +21,10 @@ export const repository = snakeCase.table(
       .primaryKey()
       .$defaultFn(() => `repo-${ulid()}`),
     forge: text({ enum: FORGES }).notNull().default("github"),
+    /**
+     * Configured Issue Tracker. Adding a Repository selects the hosting Forge.
+     */
+    issueTracker: text({ enum: ISSUE_TRACKERS }).notNull().default("github"),
     forgeHost: text().notNull().default("github.com"),
     projectPath: text().notNull(),
     localPath: text().notNull().unique(),
@@ -68,6 +73,17 @@ export const repository = snakeCase.table(
     waitForReadyForReviewChecks: integer({ mode: "boolean" })
       .notNull()
       .default(true),
+    /**
+     * Mapped Linear project id when Issue Tracker is Linear. Null otherwise.
+     * Unique among Repositories when set: one Linear project maps to one
+     * Repository.
+     */
+    linearProjectId: text(),
+    linearProjectName: text(),
+    /**
+     * JSON array of per-team In Progress/Done workflow status selections.
+     */
+    linearWorkflowStatuses: text().notNull().default("[]"),
     issuesReconciledAt: integer({ mode: "number" }),
     createdAt: integer({ mode: "number" })
       .notNull()
@@ -82,6 +98,11 @@ export const repository = snakeCase.table(
       t.forgeHost,
       sql`lower(${t.projectPath})`,
     ),
+    uniqueIndex("repository_linear_project_id_uidx")
+      .on(t.linearProjectId)
+      .where(
+        sql`${t.linearProjectId} IS NOT NULL AND ${t.linearProjectId} != ''`,
+      ),
   ],
 )
 
@@ -120,6 +141,20 @@ export const issue = snakeCase.table(
       .notNull()
       .references(() => repository.id, { onDelete: "cascade" }),
     issueNumber: integer().notNull(),
+    /**
+     * Configured Issue Tracker that sourced this Issue. Distinct from the
+     * Repository hosting Forge when they later diverge.
+     */
+    issueTracker: text({ enum: ISSUE_TRACKERS }).notNull().default("github"),
+    /**
+     * Tracker-native identity. Existing Forge Issues store the issue number
+     * as text; Linear identity is not required to be a positive integer.
+     */
+    issueNativeId: text().notNull().default(""),
+    /**
+     * Human-readable identifier. May change without changing native identity.
+     */
+    issueDisplayId: text().notNull().default(""),
     title: text().notNull(),
     body: text().notNull(),
     url: text().notNull(),
@@ -128,6 +163,8 @@ export const issue = snakeCase.table(
     issueAuthor: text(),
     parentIssueNumber: integer(),
     parentIssueUrl: text(),
+    parentNativeId: text(),
+    parentDisplayId: text(),
     parentPosition: integer(),
     hasChildren: integer({ mode: "boolean" }).notNull().default(false),
     createdAt: integer({ mode: "number" })
@@ -138,9 +175,14 @@ export const issue = snakeCase.table(
       .$defaultFn(() => Date.now()),
   },
   (t) => [
-    uniqueIndex("issue_repository_id_issue_number_uidx").on(
+    index("issue_repository_id_issue_number_idx").on(
       t.repositoryId,
       t.issueNumber,
+    ),
+    uniqueIndex("issue_repository_id_tracker_native_id_uidx").on(
+      t.repositoryId,
+      t.issueTracker,
+      t.issueNativeId,
     ),
   ],
 )
@@ -156,6 +198,8 @@ export const issueDependency = snakeCase.table(
       .references(() => issue.id, { onDelete: "cascade" }),
     blockingIssueNumber: integer().notNull(),
     blockingIssueUrl: text().notNull(),
+    blockingNativeId: text().notNull().default(""),
+    blockingDisplayId: text().notNull().default(""),
     createdAt: integer({ mode: "number" })
       .notNull()
       .$defaultFn(() => Date.now()),
@@ -249,6 +293,14 @@ export const workItem = snakeCase.table(
       .notNull()
       .references(() => repository.id, { onDelete: "cascade" }),
     issueNumber: integer().notNull(),
+    /**
+     * Original Issue Source captured at creation. Survives later Repository
+     * Issue Tracker changes.
+     */
+    issueTracker: text({ enum: ISSUE_TRACKERS }).notNull().default("github"),
+    issueNativeId: text().notNull().default(""),
+    issueDisplayId: text().notNull().default(""),
+    issueUrl: text().notNull().default(""),
     issueTitle: text(),
     pullRequestNumber: integer(),
     /** Active Agent Backend captured at Work Item creation (provenance). */
@@ -370,12 +422,17 @@ export const workItem = snakeCase.table(
       .$defaultFn(() => Date.now()),
   },
   (t) => [
-    uniqueIndex("work_item_one_unfinished_v4_uidx")
-      .on(t.repositoryId, t.issueNumber)
+    uniqueIndex("work_item_one_unfinished_v5_uidx")
+      .on(t.repositoryId, t.issueTracker, t.issueNativeId)
       .where(sql`${t.state} NOT IN ('complete', 'failed', 'abandoned')`),
     index("work_item_repository_issue_created_idx").on(
       t.repositoryId,
       t.issueNumber,
+      t.createdAt,
+    ),
+    index("work_item_repository_native_id_created_idx").on(
+      t.repositoryId,
+      t.issueNativeId,
       t.createdAt,
     ),
   ],

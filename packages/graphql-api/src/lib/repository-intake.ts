@@ -5,11 +5,15 @@ import {
   DbService,
   RepositoryNotFoundError,
 } from "@ready-for-agent/db-service"
-import { classifyIntakeCandidates } from "@ready-for-agent/lifecycle-model"
+import {
+  classifyIntakeCandidates,
+  persistedIssueIdentity,
+} from "@ready-for-agent/lifecycle-model"
 import {
   type AgentBackendUnavailableError,
   type BuildModelNotConfiguredError,
   type IssueBlockedError,
+  type IssueIdentityAmbiguousError,
   type IssueNotBlockedError,
   type IssueNotFoundError,
   type IssueNotOpenError,
@@ -34,6 +38,8 @@ export type RepositoryIntakeIssueResult =
   | {
       readonly __typename: "RepositoryIntakeCreated"
       readonly issueNumber: number
+      readonly nativeId: string
+      readonly displayId: string
       readonly title: string
       readonly url: string
       readonly action: RepositoryIntakeAction
@@ -42,6 +48,8 @@ export type RepositoryIntakeIssueResult =
   | {
       readonly __typename: "RepositoryIntakeFailed"
       readonly issueNumber: number
+      readonly nativeId: string
+      readonly displayId: string
       readonly title: string
       readonly url: string
       readonly action: RepositoryIntakeAction
@@ -61,6 +69,7 @@ export type RepositoryIntakeResult = {
 
 type CandidateLocalTag =
   | "IssueNotFoundError"
+  | "IssueIdentityAmbiguousError"
   | "IssueNotOpenError"
   | "ParentIssueError"
   | "IssueBlockedError"
@@ -83,6 +92,7 @@ export const isCandidateLocalIntakeError = (
   error: unknown,
 ): error is
   | IssueNotFoundError
+  | IssueIdentityAmbiguousError
   | IssueNotOpenError
   | ParentIssueError
   | IssueBlockedError
@@ -93,6 +103,7 @@ export const isCandidateLocalIntakeError = (
   }
   switch (error._tag as CandidateLocalTag | string) {
     case "IssueNotFoundError":
+    case "IssueIdentityAmbiguousError":
     case "IssueNotOpenError":
     case "ParentIssueError":
     case "IssueBlockedError":
@@ -162,10 +173,13 @@ export const startRepositoryIntake = (
       issues,
       workItems.map((workItem) => ({
         issueNumber: workItem.issueNumber,
+        issueTracker: workItem.issueSource.tracker,
+        nativeId: workItem.issueSource.nativeId,
         id: workItem.id,
         state: workItem.state,
         canRetry: isRetryableFailedWorkItem(workItem),
       })),
+      repository.issueTracker,
     )
 
     if (candidates.length === 0) {
@@ -184,8 +198,8 @@ export const startRepositoryIntake = (
       // Widen error channel so Implement Now and Queue share one sequential path.
       const attempt: Effect.Effect<WorkItemRecord, unknown> =
         candidate.action === "IMPLEMENT_NOW"
-          ? lifecycle.implementNow(repository.id, candidate.issueNumber)
-          : lifecycle.queue(repository.id, candidate.issueNumber)
+          ? lifecycle.implementNow(repository.id, candidate.nativeId)
+          : lifecycle.queue(repository.id, candidate.nativeId)
 
       // Capture candidate-local failures as result data; rethrow operation-level.
       const outcome = yield* Effect.result(attempt)
@@ -193,6 +207,7 @@ export const startRepositoryIntake = (
         results.push({
           __typename: "RepositoryIntakeCreated",
           issueNumber: candidate.issueNumber,
+          ...persistedIssueIdentity(candidate),
           title: candidate.title,
           url: candidate.url,
           action: candidate.action,
@@ -206,6 +221,7 @@ export const startRepositoryIntake = (
         results.push({
           __typename: "RepositoryIntakeFailed",
           issueNumber: candidate.issueNumber,
+          ...persistedIssueIdentity(candidate),
           title: candidate.title,
           url: candidate.url,
           action: candidate.action,

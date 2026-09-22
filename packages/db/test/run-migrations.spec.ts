@@ -383,6 +383,10 @@ describe("runMigrations", () => {
           { name: "20260907150000_work_item_waiting_for_ci_repair" },
           { name: "20260907160000_ci_repair_authorization" },
           { name: "20260911120000_step_run_review_progress_checkpoint" },
+          { name: "20260921120000_independent_issue_tracker" },
+          { name: "20260921140000_issue_store_tracker_identity" },
+          { name: "20260921180000_linear_discovery_settings" },
+          { name: "20260921190000_unfinished_work_item_native_identity" },
         ])
       }).pipe(Effect.provide(SqliteTest)),
     )

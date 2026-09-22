@@ -31,6 +31,7 @@ import {
   type ReadyLabeledIssue,
   type TerminalPrStatusCheck,
   extractErrorCode,
+  isDecisiveCiGateObservedRun,
 } from "@ready-for-agent/forge-contract"
 import {
   type FieldsSelection,
@@ -946,7 +947,12 @@ const toIssueReference = (
   issue: GitHubApiIssueReference,
 ): GitHubIssueReference => {
   const decoded = decodeSync(GitHubIssueReferenceSchema, issue)
-  return { number: decoded.number, url: decoded.url }
+  return {
+    number: decoded.number,
+    url: decoded.url,
+    nativeId: String(decoded.number),
+    displayId: String(decoded.number),
+  }
 }
 
 const mapBlockedByPage = (
@@ -1066,6 +1072,8 @@ const toReadyLabeledIssue = (
 
   return {
     number: decoded.number,
+    nativeId: String(decoded.number),
+    displayId: String(decoded.number),
     title: decoded.title,
     body: decoded.body,
     url: decoded.url,
@@ -2946,6 +2954,8 @@ const makeGitHubApiService = (
           const issueHierarchy = hierarchy(issue)
           return {
             number: issue.number,
+            nativeId: String(issue.number),
+            displayId: String(issue.number),
             title: issue.title,
             body: issue.body,
             url: issue.url,
@@ -2963,6 +2973,8 @@ const makeGitHubApiService = (
                 : {
                     number: issue.parent.number,
                     url: issue.parent.url,
+                    nativeId: String(issue.parent.number),
+                    displayId: String(issue.parent.number),
                     state: issue.parent.state,
                     isReadyLabeled: readyIssueUrls.has(
                       issueUrlKey(issue.parent.url),
@@ -3532,6 +3544,7 @@ const makeObserveCiGate =
       const runs: CiGateObservedRun[] = []
       let unavailable: CiGateDefinitionObservation | null = null
       let reachedLastSeen = false
+      let collectedDecisiveAfterLastSeen = false
       for (let page = 1; ; page += 1) {
         const url = new URL(
           `${GITHUB_API_URL}/repos/${repository.owner}/${repository.name}/actions/workflows/${String(workflowId)}/runs`,
@@ -3588,12 +3601,22 @@ const makeObserveCiGate =
             isSameObservedRun(mapped.runIdentity, lastSeen)
           ) {
             reachedLastSeen = true
+            if (isDecisiveCiGateObservedRun(mapped)) {
+              collectedDecisiveAfterLastSeen = true
+              break
+            }
+            continue
+          }
+          if (reachedLastSeen && isDecisiveCiGateObservedRun(mapped)) {
+            collectedDecisiveAfterLastSeen = true
             break
           }
         }
         // First observation (no last-seen run) uses one official API page.
+        // An unfinished last-seen run is not a stable cursor: keep paging
+        // until a decisive older result is included.
         if (
-          reachedLastSeen ||
+          collectedDecisiveAfterLastSeen ||
           lastSeen === null ||
           workflowRuns.length < PAGE_SIZE
         ) {

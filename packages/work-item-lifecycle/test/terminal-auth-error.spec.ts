@@ -20,6 +20,7 @@ import {
   stubAzureDevOpsServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
+  stubLinearServiceLayer,
 } from "../src/index.js"
 import { describe, expect, it } from "bun:test"
 
@@ -80,6 +81,7 @@ const lifecycleLayer = (steps: LifecycleStepsShape) =>
     Layer.provideMerge(stubGitHubServiceLayer()),
     Layer.provideMerge(stubGitLabServiceLayer()),
     Layer.provideMerge(stubAzureDevOpsServiceLayer()),
+    Layer.provideMerge(stubLinearServiceLayer()),
     Layer.provideMerge(Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps))),
     Layer.provideMerge(DbServiceLive),
     Layer.provideMerge(SqliteQueueServiceLive),
@@ -119,7 +121,7 @@ const seedImplementRun = Effect.gen(function* () {
     hasChildren: false,
     blockedBy: [],
   })
-  const created = yield* lifecycle.implementNow(repo.id, 1)
+  const created = yield* lifecycle.implementNow(repo.id, "1")
   const createRun = created.stepRuns[0]
   if (createRun === undefined) {
     throw new Error("expected create_worktree Step Run")
@@ -217,6 +219,7 @@ describe("terminal_auth_error Step Run classification (issue #1058)", () => {
       Layer.provideMerge(stubGitHubServiceLayer()),
       Layer.provideMerge(stubGitLabServiceLayer()),
       Layer.provideMerge(stubAzureDevOpsServiceLayer()),
+      Layer.provideMerge(stubLinearServiceLayer()),
       Layer.provideMerge(
         Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
       ),

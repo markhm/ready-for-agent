@@ -78,6 +78,11 @@ Feature: Route Repository settings by Repository ID
     Then the Repository settings dialog is hidden
     And the browser location is the repos path
 
+  Scenario: Failed Save preserves responses for batched background queries
+    When I open the Repos page
+    And Repository settings Save is forced to fail
+    Then a batched Repository settings Save fails without failing background queries
+
   Scenario: Direct repository settings navigation shows the dialog over Repos
     When I open the repository settings path directly
     Then the Repository settings dialog is visible
@@ -121,9 +126,9 @@ Feature: Route Repository settings by Repository ID
     When I open the Repos page
     And I open Repository settings from the card menu
     Then the Repository settings dialog is visible
-    And the Repository settings sections are Forge identity, Options, Agent backend, Models, then CI Gate
+    And the Repository settings sections are Forge identity, Issue Tracker, Options, Agent backend, Models, then CI Gate
     When I resize Repository settings to a mobile viewport
-    Then the Repository settings sections are Forge identity, Options, Agent backend, Models, then CI Gate
+    Then the Repository settings sections are Forge identity, Issue Tracker, Options, Agent backend, Models, then CI Gate
     When I cancel the Repository settings dialog
     Then the Repository settings dialog is hidden
     And the browser location is the repos path
@@ -134,7 +139,7 @@ Feature: Route Repository settings by Repository ID
     And I open Repository settings from the card menu
     Then the Repository settings dialog is visible
     And CI Gate discovery is pending
-    And the Repository settings sections are Forge identity, Options, Agent backend, Models, then CI Gate
+    And the Repository settings sections are Forge identity, Issue Tracker, Options, Agent backend, Models, then CI Gate
     When I change the Repository paused draft
     Then the Repository settings dialog is visible
     When CI Gate discovery completes

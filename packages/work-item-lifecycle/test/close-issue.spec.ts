@@ -17,15 +17,23 @@ import {
   GitLabService,
   type GitLabServiceShape,
 } from "@ready-for-agent/gitlab-service"
+import { forgeIssueSource } from "@ready-for-agent/lifecycle-model"
+import {
+  LinearNotConfiguredError,
+  LinearRequestError,
+  linearMilestoneMarker,
+} from "@ready-for-agent/linear-service"
 import type { LifecycleStepContext } from "../src/index.js"
 import {
   CloseIssueContextError,
   CloseIssueEligibilityError,
   CloseIssueSummaryMissingError,
   closeIssue,
+  linearCompletionComment,
   makeWorkItemId,
   stubAzureDevOpsServiceLayer,
   stubGitLabServiceLayer,
+  stubLinearServiceLayer,
 } from "../src/index.js"
 import { describe, expect, it } from "bun:test"
 
@@ -63,6 +71,46 @@ const context: LifecycleStepContext = {
 
   publicationBody: null,
   sessionId: "ses_implement",
+}
+
+const linearNativeId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+const linearWorkflow = {
+  teamId: "team-eng",
+  teamKey: "ENG",
+  teamName: "Engineering",
+  inProgressStateId: "progress",
+  inProgressStateName: "In Progress",
+  doneStateId: "done",
+  doneStateName: "Done",
+} as const
+const linearRepository = makeRepositoryRecord({
+  localPath: "/repos/widgets",
+  issueTracker: "linear",
+  linearProjectId: "proj-1",
+  linearProjectName: "Widgets",
+  linearWorkflowStatuses: [linearWorkflow],
+})
+const linearIssueSource = {
+  tracker: "linear" as const,
+  nativeId: linearNativeId,
+  displayId: "ENG-123",
+  url: "https://linear.app/acme/issue/ENG-123",
+}
+const linearLeaf = {
+  repositoryId: linearRepository.id,
+  issueNumber: 123,
+  issueTracker: "linear" as const,
+  nativeId: linearNativeId,
+  displayId: "ENG-123",
+  title: "Linear leaf",
+  body: "body",
+  url: "https://linear.app/acme/issue/ENG-123",
+  state: "OPEN" as const,
+  githubCreatedAt: new Date("2026-01-15T12:00:00.000Z"),
+  parent: null,
+  parentPosition: null,
+  hasChildren: false,
+  blockedBy: [] as const,
 }
 
 const unusedGithub = {
@@ -120,7 +168,7 @@ describe("closeIssue", () => {
     const github = Layer.succeed(GitHubService, unusedGithub)
     const error = await Effect.runPromise(
       closeIssue(context).pipe(
-        Effect.provide(Layer.merge(db, github)),
+        Effect.provide(Layer.mergeAll(db, github, stubLinearServiceLayer())),
         Effect.flip,
       ),
     )
@@ -213,7 +261,13 @@ describe("closeIssue", () => {
         repositoryId: gitlabRepository.id,
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(db, github, gitlab, stubAzureDevOpsServiceLayer()),
+          Layer.mergeAll(
+            db,
+            github,
+            gitlab,
+            stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer(),
+          ),
         ),
       ),
     )
@@ -284,7 +338,13 @@ describe("closeIssue", () => {
         repositoryId: azureDevOpsRepository.id,
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(db, github, stubGitLabServiceLayer(), azureDevOps),
+          Layer.mergeAll(
+            db,
+            github,
+            stubGitLabServiceLayer(),
+            azureDevOps,
+            stubLinearServiceLayer(),
+          ),
         ),
       ),
     )
@@ -342,7 +402,13 @@ describe("closeIssue", () => {
         repositoryId: azureDevOpsRepository.id,
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(db, github, stubGitLabServiceLayer(), azureDevOps),
+          Layer.mergeAll(
+            db,
+            github,
+            stubGitLabServiceLayer(),
+            azureDevOps,
+            stubLinearServiceLayer(),
+          ),
         ),
         Effect.flip,
       ),
@@ -369,7 +435,7 @@ describe("closeIssue", () => {
     } satisfies GitHubServiceShape)
     const error = await Effect.runPromise(
       closeIssue(context).pipe(
-        Effect.provide(Layer.merge(db, github)),
+        Effect.provide(Layer.mergeAll(db, github, stubLinearServiceLayer())),
         Effect.flip,
       ),
     )
@@ -403,7 +469,7 @@ describe("closeIssue", () => {
     } satisfies GitHubServiceShape)
     const error = await Effect.runPromise(
       closeIssue(context).pipe(
-        Effect.provide(Layer.merge(db, github)),
+        Effect.provide(Layer.mergeAll(db, github, stubLinearServiceLayer())),
         Effect.flip,
       ),
     )
@@ -446,6 +512,7 @@ describe("closeIssue", () => {
             github,
             stubGitLabServiceLayer(),
             stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer(),
           ),
         ),
       ),
@@ -485,10 +552,512 @@ describe("closeIssue", () => {
             github,
             stubGitLabServiceLayer(),
             stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer(),
           ),
         ),
       ),
     )
     expect(calls).toEqual(["Findings complete."])
+  })
+
+  it("closes via Original Issue Source after the Repository Issue Tracker changes", async () => {
+    const switched = makeRepositoryRecord({
+      localPath: "/repos/widgets",
+      issueTracker: "linear",
+    })
+    const db = stubDbServiceLayer({
+      listRepositories: Effect.succeed([switched]),
+      listIssues: () => Effect.succeed([openLeaf]),
+    })
+    const githubCalls: string[] = []
+    let gitlabCalls = 0
+    const github = Layer.succeed(GitHubService, {
+      ...unusedGithub,
+      ensureIssueCompletedWithSummary: (_repo, issueNumber) =>
+        Effect.sync(() => {
+          githubCalls.push(String(issueNumber))
+        }),
+    } satisfies GitHubServiceShape)
+    const gitlab = Layer.succeed(GitLabService, {
+      ensureIssueCompletedWithSummary: () => {
+        gitlabCalls += 1
+        return Effect.void
+      },
+    } as GitLabServiceShape)
+
+    await Effect.runPromise(
+      closeIssue({
+        ...context,
+        issueSource: forgeIssueSource({
+          tracker: "github",
+          issueNumber: 42,
+          url: openLeaf.url,
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            gitlab,
+            stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer(),
+          ),
+        ),
+      ),
+    )
+
+    expect(githubCalls).toEqual(["42"])
+    expect(gitlabCalls).toBe(0)
+  })
+
+  it("closes a GitLab Original Issue Source on a GitHub-hosted Repository", async () => {
+    const db = stubDbServiceLayer({
+      listRepositories: Effect.succeed([repository]),
+      listIssues: () => Effect.succeed([openLeaf]),
+    })
+    let githubCalls = 0
+    const gitlabCalls: Array<{
+      issueNumber: number
+      projectPath: string
+    }> = []
+    const github = Layer.succeed(GitHubService, {
+      ...unusedGithub,
+      ensureIssueCompletedWithSummary: () => {
+        githubCalls += 1
+        return Effect.void
+      },
+    } satisfies GitHubServiceShape)
+    const gitlab = Layer.succeed(GitLabService, {
+      ensureIssueCompletedWithSummary: (forgeRepository, issueNumber) =>
+        Effect.sync(() => {
+          gitlabCalls.push({
+            issueNumber,
+            projectPath: forgeRepository.projectPath,
+          })
+        }),
+    } as GitLabServiceShape)
+
+    await Effect.runPromise(
+      closeIssue({
+        ...context,
+        issueSource: forgeIssueSource({
+          tracker: "gitlab",
+          issueNumber: 42,
+          url: "https://git.drupalcode.org/project/widgets/-/issues/42",
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            gitlab,
+            stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer(),
+          ),
+        ),
+      ),
+    )
+
+    expect(githubCalls).toBe(0)
+    expect(gitlabCalls).toEqual([
+      { issueNumber: 42, projectPath: "acme/widgets" },
+    ])
+  })
+
+  it("completes a Linear Issue with the configured Done status and summary", async () => {
+    const db = stubDbServiceLayer({
+      listRepositories: Effect.succeed([linearRepository]),
+      listIssues: () => Effect.succeed([linearLeaf]),
+    })
+    let githubCalls = 0
+    const states: string[] = []
+    const comments: Array<{ nativeId: string; marker: string; body: string }> =
+      []
+    const github = Layer.succeed(GitHubService, {
+      ...unusedGithub,
+      ensureIssueCompletedWithSummary: () => {
+        githubCalls += 1
+        return Effect.void
+      },
+    } satisfies GitHubServiceShape)
+
+    await Effect.runPromise(
+      closeIssue({
+        ...context,
+        issueSource: linearIssueSource,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            stubGitLabServiceLayer(),
+            stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer({
+              issue: {
+                id: linearNativeId,
+                identifier: "ENG-123",
+                url: linearIssueSource.url,
+                teamId: linearWorkflow.teamId,
+                teamKey: linearWorkflow.teamKey,
+                stateId: "todo",
+                stateName: "Todo",
+                stateType: "unstarted",
+              },
+              updateIssueState: (_id, stateId) =>
+                Effect.sync(() => {
+                  states.push(stateId)
+                }),
+              ensureMilestoneComment: (nativeId, marker, body) =>
+                Effect.sync(() => {
+                  comments.push({ nativeId, marker, body })
+                }),
+            }),
+          ),
+        ),
+      ),
+    )
+
+    expect(githubCalls).toBe(0)
+    expect(states).toEqual(["done"])
+    expect(comments).toEqual([
+      {
+        nativeId: linearNativeId,
+        marker: linearMilestoneMarker("completion", context.workItemId),
+        body: linearCompletionComment(context.workItemId, "Findings complete."),
+      },
+    ])
+  })
+
+  it("accepts an already-completed Linear Issue and still ensures the summary", async () => {
+    const db = stubDbServiceLayer({
+      listRepositories: Effect.succeed([linearRepository]),
+      listIssues: () =>
+        Effect.succeed([{ ...linearLeaf, state: "CLOSED" as const }]),
+    })
+    const states: string[] = []
+    const comments: Array<{ marker: string; body: string }> = []
+    let githubCalls = 0
+    const github = Layer.succeed(GitHubService, {
+      ...unusedGithub,
+      ensureIssueCompletedWithSummary: () => {
+        githubCalls += 1
+        return Effect.void
+      },
+    } satisfies GitHubServiceShape)
+
+    await Effect.runPromise(
+      closeIssue({
+        ...context,
+        issueSource: linearIssueSource,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            stubGitLabServiceLayer(),
+            stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer({
+              issue: {
+                id: linearNativeId,
+                identifier: "ENG-123",
+                url: linearIssueSource.url,
+                teamId: linearWorkflow.teamId,
+                teamKey: linearWorkflow.teamKey,
+                stateId: "done",
+                stateName: "Done",
+                stateType: "completed",
+              },
+              updateIssueState: (_id, stateId) =>
+                Effect.sync(() => {
+                  states.push(stateId)
+                }),
+              ensureMilestoneComment: (_id, marker, body) =>
+                Effect.sync(() => {
+                  comments.push({ marker, body })
+                }),
+            }),
+          ),
+        ),
+      ),
+    )
+
+    expect(githubCalls).toBe(0)
+    expect(states).toEqual(["done"])
+    expect(comments).toEqual([
+      {
+        marker: linearMilestoneMarker("completion", context.workItemId),
+        body: linearCompletionComment(context.workItemId, "Findings complete."),
+      },
+    ])
+  })
+
+  it("completes Linear by native identity, not a colliding GitHub leftover", async () => {
+    const db = stubDbServiceLayer({
+      listRepositories: Effect.succeed([linearRepository]),
+      listIssues: () =>
+        Effect.succeed([
+          {
+            ...openLeaf,
+            repositoryId: linearRepository.id,
+            issueNumber: 123,
+            issueTracker: "github" as const,
+            nativeId: "123",
+            displayId: "123",
+            hasChildren: true,
+            url: "https://github.com/acme/widgets/issues/123",
+          },
+          linearLeaf,
+        ]),
+    })
+    const states: string[] = []
+    const comments: string[] = []
+    let githubCalls = 0
+    const github = Layer.succeed(GitHubService, {
+      ...unusedGithub,
+      ensureIssueCompletedWithSummary: () => {
+        githubCalls += 1
+        return Effect.void
+      },
+    } satisfies GitHubServiceShape)
+
+    await Effect.runPromise(
+      closeIssue({
+        ...context,
+        issueNumber: 123,
+        issueSource: linearIssueSource,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            stubGitLabServiceLayer(),
+            stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer({
+              issue: {
+                id: linearNativeId,
+                identifier: "ENG-123",
+                url: linearIssueSource.url,
+                teamId: linearWorkflow.teamId,
+                teamKey: linearWorkflow.teamKey,
+                stateId: "todo",
+                stateName: "Todo",
+                stateType: "unstarted",
+              },
+              updateIssueState: (_id, stateId) =>
+                Effect.sync(() => {
+                  states.push(stateId)
+                }),
+              ensureMilestoneComment: (_id, marker) =>
+                Effect.sync(() => {
+                  comments.push(marker)
+                }),
+            }),
+          ),
+        ),
+      ),
+    )
+
+    expect(githubCalls).toBe(0)
+    expect(states).toEqual(["done"])
+    expect(comments).toEqual([
+      linearMilestoneMarker("completion", context.workItemId),
+    ])
+  })
+
+  it("completes a Linear Original Issue Source after the Repository leaves Linear", async () => {
+    const switched = makeRepositoryRecord({
+      localPath: "/repos/widgets",
+      issueTracker: "github",
+      linearWorkflowStatuses: [linearWorkflow],
+    })
+    const db = stubDbServiceLayer({
+      listRepositories: Effect.succeed([switched]),
+      listIssues: () => Effect.succeed([linearLeaf]),
+    })
+    const states: string[] = []
+    let githubCalls = 0
+    const github = Layer.succeed(GitHubService, {
+      ...unusedGithub,
+      ensureIssueCompletedWithSummary: () => {
+        githubCalls += 1
+        return Effect.void
+      },
+    } satisfies GitHubServiceShape)
+
+    await Effect.runPromise(
+      closeIssue({
+        ...context,
+        issueSource: linearIssueSource,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            stubGitLabServiceLayer(),
+            stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer({
+              issue: {
+                id: linearNativeId,
+                identifier: "ENG-123",
+                url: linearIssueSource.url,
+                teamId: linearWorkflow.teamId,
+                teamKey: linearWorkflow.teamKey,
+                stateId: "todo",
+                stateName: "Todo",
+                stateType: "unstarted",
+              },
+              updateIssueState: (_id, stateId) =>
+                Effect.sync(() => {
+                  states.push(stateId)
+                }),
+            }),
+          ),
+        ),
+      ),
+    )
+
+    expect(githubCalls).toBe(0)
+    expect(states).toEqual(["done"])
+  })
+
+  it("rejects an open Linear parent Issue before mutation", async () => {
+    const db = stubDbServiceLayer({
+      listRepositories: Effect.succeed([linearRepository]),
+      listIssues: () => Effect.succeed([{ ...linearLeaf, hasChildren: true }]),
+    })
+    let updated = false
+    let commented = false
+    const github = Layer.succeed(GitHubService, unusedGithub)
+
+    const error = await Effect.runPromise(
+      closeIssue({
+        ...context,
+        issueSource: linearIssueSource,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            stubGitLabServiceLayer(),
+            stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer({
+              updateIssueState: () =>
+                Effect.sync(() => {
+                  updated = true
+                }),
+              ensureMilestoneComment: () =>
+                Effect.sync(() => {
+                  commented = true
+                }),
+            }),
+          ),
+        ),
+        Effect.flip,
+      ),
+    )
+
+    expect(error).toBeInstanceOf(CloseIssueEligibilityError)
+    expect((error as CloseIssueEligibilityError).failureCode).toBe(
+      "issue_is_parent",
+    )
+    expect(updated).toBe(false)
+    expect(commented).toBe(false)
+  })
+
+  it("fails Linear close-out as a Linear error when Done is not configured", async () => {
+    const unconfigured = makeRepositoryRecord({
+      localPath: "/repos/widgets",
+      issueTracker: "linear",
+      linearProjectId: "proj-1",
+      linearProjectName: "Widgets",
+      linearWorkflowStatuses: [],
+    })
+    const db = stubDbServiceLayer({
+      listRepositories: Effect.succeed([unconfigured]),
+      listIssues: () => Effect.succeed([linearLeaf]),
+    })
+    const comments: string[] = []
+    const github = Layer.succeed(GitHubService, unusedGithub)
+
+    const error = await Effect.runPromise(
+      closeIssue({
+        ...context,
+        issueSource: linearIssueSource,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            stubGitLabServiceLayer(),
+            stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer({
+              issue: {
+                id: linearNativeId,
+                identifier: "ENG-123",
+                url: linearIssueSource.url,
+                teamId: linearWorkflow.teamId,
+                teamKey: linearWorkflow.teamKey,
+                stateId: "todo",
+                stateName: "Todo",
+                stateType: "unstarted",
+              },
+              ensureMilestoneComment: (_id, marker) =>
+                Effect.sync(() => {
+                  comments.push(marker)
+                }),
+            }),
+          ),
+        ),
+        Effect.flip,
+      ),
+    )
+
+    expect(error).toBeInstanceOf(LinearNotConfiguredError)
+    expect(comments).toEqual([
+      linearMilestoneMarker("completion", context.workItemId),
+    ])
+  })
+
+  it("surfaces a Linear request failure without calling GitHub", async () => {
+    const db = stubDbServiceLayer({
+      listRepositories: Effect.succeed([linearRepository]),
+      listIssues: () => Effect.succeed([linearLeaf]),
+    })
+    let githubCalls = 0
+    const github = Layer.succeed(GitHubService, {
+      ...unusedGithub,
+      ensureIssueCompletedWithSummary: () => {
+        githubCalls += 1
+        return Effect.void
+      },
+    } satisfies GitHubServiceShape)
+
+    const error = await Effect.runPromise(
+      closeIssue({
+        ...context,
+        issueSource: linearIssueSource,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            stubGitLabServiceLayer(),
+            stubAzureDevOpsServiceLayer(),
+            stubLinearServiceLayer({
+              ensureMilestoneComment: () =>
+                Effect.fail(
+                  new LinearRequestError({
+                    message: "Linear comment API unavailable",
+                  }),
+                ),
+            }),
+          ),
+        ),
+        Effect.flip,
+      ),
+    )
+
+    expect(error).toBeInstanceOf(LinearRequestError)
+    expect(githubCalls).toBe(0)
   })
 })

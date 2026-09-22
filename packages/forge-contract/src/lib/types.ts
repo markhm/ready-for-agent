@@ -53,7 +53,11 @@ export interface CiGateObservation {
 
 export interface ObserveCiGateInput {
   readonly definitionIdentities: readonly string[]
-  /** Last included run identity per definition; empty when none yet. */
+  /**
+   * Latest observed run identity per definition; empty when none yet.
+   * Adapters treat a decisive last-seen run as a stable cursor and keep
+   * paging past an unfinished last-seen run until a decisive older result.
+   */
   readonly lastRunIdentities: { readonly [definitionIdentity: string]: string }
 }
 
@@ -195,6 +199,8 @@ export type GitHubIssueState = "OPEN" | "CLOSED"
 export interface GitHubIssueReference {
   readonly number: number
   readonly url: string
+  readonly nativeId: string
+  readonly displayId: string
 }
 
 export type GitHubPullRequestLifecycleState = "OPEN" | "MERGED" | "CLOSED"
@@ -277,6 +283,13 @@ export interface GitHubIssueParent extends GitHubIssueReference {
 
 export interface ReadyLabeledIssue {
   readonly number: number
+  /**
+   * Tracker-native identity. Forge Issues use the issue number as text;
+   * Linear supplies a UUID distinct from the display key.
+   */
+  readonly nativeId: string
+  /** Human-readable identifier such as `ENG-123`. Distinct from native identity. */
+  readonly displayId: string
   readonly title: string
   readonly body: string
   readonly url: string

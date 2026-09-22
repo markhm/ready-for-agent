@@ -3,6 +3,7 @@ import { SqlClient } from "effect/unstable/sql"
 import { AgentBackend, agentBackendLabel } from "@ready-for-agent/agent-backend"
 import { DbService } from "@ready-for-agent/db-service"
 import { resolveForgeIssuePresentation } from "@ready-for-agent/forge-contract"
+import { formatIssueDisplayId } from "@ready-for-agent/lifecycle-model"
 import {
   type AgentTurnForgeAuth,
   AgentTurnForgeCredentialMissingError,
@@ -20,7 +21,14 @@ import {
   ImplementRepositoryNotFoundError,
   ImplementWorktreeContextMissingError,
 } from "./implement-errors.js"
+import { issueOperationsForge } from "./issue-source-execution.js"
 import type { LifecycleStepContext } from "./lifecycle-steps.js"
+import {
+  isLinearIssueSource,
+  notifyLinearWorkStarted,
+} from "./linear-milestones.js"
+import { promptUserContentSection } from "./sanitize-prompt-user-content.js"
+import { loadScopeHandoff } from "./scope-handoff.js"
 import { DEFAULT_LIFECYCLE_MAX_DURATIONS } from "./types.js"
 import { workItemAttachmentDirectory } from "./work-item-attachment-directory.js"
 
@@ -128,21 +136,61 @@ const visualEvidencePromptLines = (workItemId: string): readonly string[] => {
 }
 
 /**
- * Issue identity plus Forge name in the prompt. GitHub stays ambient (no host,
- * no credential line); GitLab and Azure DevOps name the host and carry the
- * Forge-selected credential guidance.
+ * Issue identity and source-credential guidance in the prompt follow the
+ * Original Issue Source. Git/PR credentials follow the Repository hosting
+ * Forge. GitHub stays ambient; GitLab and Azure DevOps name the host.
  */
 const buildImplementPrompt = (
-  repository: AgentTurnForgeRepository,
+  gitRepository: AgentTurnForgeRepository,
   issueNumber: number,
   workItemId: string,
   forgeAuth: AgentTurnForgeAuth,
   mode: "start" | "continue",
+  issueUrl: string | undefined,
+  issueSource: LifecycleStepContext["issueSource"],
+  liveIssue: { readonly title: string; readonly body: string } | null,
 ) => {
+  if (isLinearIssueSource(issueSource)) {
+    const display = formatIssueDisplayId(issueSource.displayId)
+    const identityLine =
+      mode === "start"
+        ? `Implement Linear issue ${display}.`
+        : `Continue implementing Linear issue ${display}.`
+    const inspectLine =
+      mode === "start"
+        ? "Inspect the current Linear Issue and this Repository's agent/project instructions."
+        : "Inspect the current Linear Issue, this Repository's agent/project instructions, and any partial work already present."
+    const contentLines =
+      liveIssue === null
+        ? []
+        : [
+            promptUserContentSection("issue_title", liveIssue.title),
+            promptUserContentSection("issue_body", liveIssue.body),
+          ]
+    return [
+      identityLine,
+      issueSource.url,
+      ...(mode === "continue"
+        ? [
+            "A previous Implement attempt was interrupted or failed; resume from the existing session and worktree state.",
+          ]
+        : []),
+      inspectLine,
+      ...contentLines,
+      "Leave the tracker Issue open. Do not close, complete, or change its Linear workflow state.",
+      "Implement in this GitHub Repository. Do not fabricate a GitHub numeric closing reference for this Linear Issue.",
+      mode === "start"
+        ? "Make the implementation in this worktree and run appropriate verification."
+        : "Finish the implementation in this worktree and run appropriate verification.",
+      implementTheIssuePromptLine,
+      ...visualEvidencePromptLines(workItemId),
+    ].join("\n")
+  }
+
   const presentation = resolveForgeIssuePresentation({
-    forge: repository.forge,
-    forgeHost: repository.forgeHost,
-    projectPath: repository.projectPath,
+    forge: gitRepository.forge,
+    forgeHost: gitRepository.forgeHost,
+    projectPath: gitRepository.projectPath,
     issueNumber,
   })
   const identityLine =
@@ -156,14 +204,17 @@ const buildImplementPrompt = (
   const credentialLine = presentation.includeCredentialGuidance
     ? [
         agentTurnForgeCredentialGuidance(
-          repository,
+          gitRepository,
           forgeAuth,
           presentation.implementAccessScope,
         ),
       ]
     : []
+  const urlLine =
+    issueUrl !== undefined && issueUrl.trim() !== "" ? [issueUrl] : []
   return [
     identityLine,
+    ...urlLine,
     ...(mode === "continue"
       ? [
           "A previous Implement attempt was interrupted or failed; resume from the existing session and worktree state.",
@@ -176,6 +227,8 @@ const buildImplementPrompt = (
       ? "Make the implementation in this worktree and run appropriate verification."
       : "Finish the implementation in this worktree and run appropriate verification.",
     implementTheIssuePromptLine,
+    "Deliver the smallest change satisfying the agreed scope. Existing upstream limitations and speculative hardening are follow-up observations, not new requirements. If a requirement genuinely needs broader work, request a scope decision before expanding it.",
+    "Run appropriate verification; the harness owns the full review cycle. Do not launch your own full-worktree reviews.",
     ...visualEvidencePromptLines(workItemId),
   ].join("\n")
 }
@@ -199,7 +252,26 @@ export const implement = (context: LifecycleStepContext) =>
     const worktreePath = yield* resolveWorktreePath(context)
     const repository = yield* resolveRepository(context)
     const issueNumber = yield* resolveIssueNumber(context)
-    const forgeAuth = yield* resolveAgentTurnForgeAuth(repository).pipe(
+    const issueForge = issueOperationsForge(
+      context.issueSource,
+      repository.forge,
+    )
+    const gitForge = isLinearIssueSource(context.issueSource)
+      ? repository.forge
+      : issueForge
+    if (gitForge === null) {
+      return yield* new ImplementIssueContextMissingError({
+        workItemId: context.workItemId,
+        message:
+          "Implement requires a Forge-hosted Repository for git and pull requests",
+      })
+    }
+    const gitRepository = {
+      forge: gitForge,
+      forgeHost: repository.forgeHost,
+      projectPath: repository.projectPath,
+    }
+    const forgeAuth = yield* resolveAgentTurnForgeAuth(gitRepository).pipe(
       Effect.mapError((cause) => {
         if (
           cause instanceof AgentTurnForgeCredentialMissingError ||
@@ -212,24 +284,50 @@ export const implement = (context: LifecycleStepContext) =>
         }
         return new ImplementForgeCredentialError({
           repositoryId: context.repositoryId,
-          message: `Failed to resolve the repository ${forgeDisplayName(repository.forge)} credential`,
+          message: `Failed to resolve the ${forgeDisplayName(gitForge)} credential`,
           cause,
         })
       }),
     )
 
+    if (isLinearIssueSource(context.issueSource)) {
+      yield* notifyLinearWorkStarted({
+        repository,
+        issueSource: context.issueSource,
+        workItemId: context.workItemId,
+      })
+    }
+
+    const db = yield* DbService
+    const storedIssue = (yield* db.listIssues(context.repositoryId)).find(
+      (candidate) =>
+        isLinearIssueSource(context.issueSource)
+          ? candidate.nativeId === context.issueSource.nativeId
+          : candidate.issueNumber === issueNumber,
+    )
+    const liveIssue =
+      storedIssue === undefined
+        ? context.issueTitle === null
+          ? null
+          : { title: context.issueTitle, body: "" }
+        : { title: storedIssue.title, body: storedIssue.body }
+
     const existingSessionId = priorSessionId(context)
-    const prompt = buildImplementPrompt(
-      repository,
+    const implementationPrompt = buildImplementPrompt(
+      gitRepository,
       issueNumber,
       context.workItemId,
       forgeAuth,
       existingSessionId === null ? "start" : "continue",
+      context.issueSource?.url,
+      context.issueSource,
+      isLinearIssueSource(context.issueSource) ? liveIssue : null,
     )
+    const scopeHandoff = yield* loadScopeHandoff(context, worktreePath)
+    const prompt = `${implementationPrompt}\n\n${scopeHandoff}`
 
     const agentBackend = yield* AgentBackend
     const sql = yield* SqlClient.SqlClient
-    const db = yield* DbService
     const onSessionId = (sessionId: string) =>
       persistSessionIdMidRun(
         context.workItemId,

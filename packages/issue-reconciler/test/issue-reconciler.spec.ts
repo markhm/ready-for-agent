@@ -25,6 +25,10 @@ import {
   type GitLabServiceShape,
 } from "@ready-for-agent/gitlab-service"
 import {
+  LinearNotConfiguredError,
+  LinearService,
+} from "@ready-for-agent/linear-service"
+import {
   IssueReconciler,
   IssueReconcilerLive,
   ReconciliationMutationError,
@@ -37,11 +41,33 @@ const repository = makeRepositoryRecord({
   waitForReadyForReviewChecks: true,
 })
 
+const forgeIssueRef = (number: number, url: string) => ({
+  number,
+  url,
+  nativeId: String(number),
+  displayId: String(number),
+})
+
+const forgeIssueParent = (
+  number: number,
+  url: string,
+  extra: {
+    readonly state?: "OPEN" | "CLOSED"
+    readonly isReadyLabeled?: boolean
+  } = {},
+) => ({
+  ...forgeIssueRef(number, url),
+  state: extra.state ?? "OPEN",
+  isReadyLabeled: extra.isReadyLabeled ?? true,
+})
+
 const remoteIssue = (
   number: number,
   overrides: Partial<ReadyLabeledIssue> = {},
 ): ReadyLabeledIssue => ({
   number,
+  nativeId: String(number),
+  displayId: String(number),
   title: `Issue ${number}`,
   body: `Body ${number}`,
   url: `https://github.com/acme/widgets/issues/${number}`,
@@ -68,6 +94,9 @@ const localIssue = (
     id: `issue-${number}`,
     repositoryId: repository.id,
     issueNumber: number,
+    issueTracker: "github",
+    nativeId: String(number),
+    displayId: String(number),
     title: remote.title,
     body: remote.body,
     url: remote.url,
@@ -82,10 +111,14 @@ const localIssue = (
         : {
             issueNumber: remote.parent.number,
             issueUrl: remote.parent.url,
+            nativeId: remote.parent.nativeId,
+            displayId: remote.parent.displayId,
           },
     blockedBy: remote.blockedBy.map((dependency) => ({
       issueNumber: dependency.number,
       issueUrl: dependency.url,
+      nativeId: dependency.nativeId,
+      displayId: dependency.displayId,
     })),
     ...overrides,
   }
@@ -143,6 +176,16 @@ const makeDbFixture = (options: DbFixtureOptions) => {
         actions.push(`delete:${issueNumber}`)
         const index = stored.findIndex(
           (issue) => issue.issueNumber === issueNumber,
+        )
+        if (index >= 0) stored.splice(index, 1)
+      }),
+    deleteIssueByNativeId: (_repositoryId, issueTracker, nativeId) =>
+      Effect.sync(() => {
+        actions.push(`delete-native:${issueTracker}:${nativeId}`)
+        const index = stored.findIndex(
+          (issue) =>
+            (issue.issueTracker ?? "github") === issueTracker &&
+            issue.nativeId === nativeId,
         )
         if (index >= 0) stored.splice(index, 1)
       }),
@@ -301,19 +344,35 @@ const defaultAzureDevOpsLayer = Layer.succeed(
   defaultAzureDevOpsShape,
 )
 
+const defaultLinearLayer = Layer.succeed(LinearService, {
+  getAuthenticatedUserLogin: () => Effect.succeed("linear-user"),
+  listReadyIssues: () => Effect.succeed([]),
+  listProjects: () => Effect.succeed([]),
+  listProjectWorkflow: () => Effect.succeed([]),
+  hasCredentials: () => Effect.succeed(true),
+  hasAmbientCredentials: () => Effect.succeed(true),
+})
+
 const runReconciliation = <A, E>(
   effect: Effect.Effect<A, E, IssueReconciler>,
   dbLayer: Layer.Layer<DbService>,
   githubLayer: Layer.Layer<GitHubService>,
   gitlabLayer: Layer.Layer<GitLabService> = defaultGitLabLayer,
   azureDevOpsLayer: Layer.Layer<AzureDevOpsService> = defaultAzureDevOpsLayer,
+  linearLayer: Layer.Layer<LinearService> = defaultLinearLayer,
 ): Promise<A> =>
   Effect.runPromise(
     effect.pipe(
       Effect.provide(
         IssueReconcilerLive.pipe(
           Layer.provide(
-            Layer.mergeAll(dbLayer, githubLayer, gitlabLayer, azureDevOpsLayer),
+            Layer.mergeAll(
+              dbLayer,
+              githubLayer,
+              gitlabLayer,
+              azureDevOpsLayer,
+              linearLayer,
+            ),
           ),
         ),
       ),
@@ -337,10 +396,10 @@ describe("IssueReconciler", () => {
       remoteIssue(1, {
         hierarchySupported: false,
         blockedBy: [
-          {
-            number: 99,
-            url: "https://git.drupalcode.org/project/oauth_client/-/issues/99",
-          },
+          forgeIssueRef(
+            99,
+            "https://git.drupalcode.org/project/oauth_client/-/issues/99",
+          ),
         ],
       }),
       remoteIssue(2, {
@@ -440,8 +499,13 @@ describe("IssueReconciler", () => {
             issueNumber: 99,
             issueUrl:
               "https://git.drupalcode.org/project/oauth_client/-/issues/99",
+            nativeId: "99",
+            displayId: "99",
           },
         ])
+        expect(db.stored[0]?.issueTracker).toBe("gitlab")
+        expect(db.stored[0]?.nativeId).toBe("1")
+        expect(db.stored[0]?.displayId).toBe("1")
         expect(db.actions).toContain("gitlab:project/oauth_client")
       }),
       db.layer,
@@ -540,17 +604,12 @@ describe("IssueReconciler", () => {
         remoteIssue(3),
         remoteIssue(2, {
           state: "CLOSED",
-          parent: {
-            number: 1,
-            url: "https://github.com/acme/widgets/issues/1",
-            state: "OPEN",
-            isReadyLabeled: true,
-          },
+          parent: forgeIssueParent(
+            1,
+            "https://github.com/acme/widgets/issues/1",
+          ),
           blockedBy: [
-            {
-              number: 1,
-              url: "https://github.com/acme/widgets/issues/1",
-            },
+            forgeIssueRef(1, "https://github.com/acme/widgets/issues/1"),
           ],
         }),
         remoteIssue(1),
@@ -576,7 +635,7 @@ describe("IssueReconciler", () => {
           "github:acme/widgets",
           "store:2",
           "store:3",
-          "delete:4",
+          "delete-native:github:4",
           "mark",
         ])
         expect(
@@ -598,6 +657,8 @@ describe("IssueReconciler", () => {
           {
             issueNumber: 1,
             issueUrl: "https://github.com/acme/widgets/issues/1",
+            nativeId: "1",
+            displayId: "1",
           },
         ])
       }),
@@ -619,8 +680,8 @@ describe("IssueReconciler", () => {
         expect(db.actions).toEqual([
           "list",
           "github:acme/widgets",
-          "delete:1",
-          "delete:2",
+          "delete-native:github:1",
+          "delete-native:github:2",
           "mark",
         ])
       }),
@@ -635,10 +696,7 @@ describe("IssueReconciler", () => {
       [
         remoteIssue(1, {
           blockedBy: [
-            {
-              number: 2,
-              url: "https://github.com/acme/widgets/issues/2",
-            },
+            forgeIssueRef(2, "https://github.com/acme/widgets/issues/2"),
           ],
         }),
       ],
@@ -669,12 +727,10 @@ describe("IssueReconciler", () => {
       [
         remoteIssue(1, {
           parentPosition: 4,
-          parent: {
-            number: 9,
-            url: "https://github.com/acme/widgets/issues/9",
-            state: "OPEN",
-            isReadyLabeled: true,
-          },
+          parent: forgeIssueParent(
+            9,
+            "https://github.com/acme/widgets/issues/9",
+          ),
         }),
       ],
       db.actions,
@@ -689,6 +745,8 @@ describe("IssueReconciler", () => {
         expect(db.stored[0]?.parent).toEqual({
           issueNumber: 9,
           issueUrl: "https://github.com/acme/widgets/issues/9",
+          nativeId: "9",
+          displayId: "9",
         })
         expect(db.stored[0]?.parentPosition).toBe(4)
       }),
@@ -721,12 +779,10 @@ describe("IssueReconciler", () => {
     const db = makeDbFixture({
       issues: [localIssue(3), localIssue(4), localIssue(5), localIssue(6)],
     })
-    const parent = {
-      number: 1,
-      url: "https://github.com/acme/widgets/issues/1",
-      state: "OPEN" as const,
-      isReadyLabeled: true,
-    }
+    const parent = forgeIssueParent(
+      1,
+      "https://github.com/acme/widgets/issues/1",
+    )
     const github = makeGitHubLayer(
       [
         remoteIssue(1),
@@ -1090,7 +1146,7 @@ describe("IssueReconciler", () => {
           "list",
           "github:acme/widgets",
           "store:1",
-          "delete:2",
+          "delete-native:github:2",
           "mark",
         ])
         expect(db.reconciledAt).toBeUndefined()
@@ -1150,22 +1206,18 @@ describe("IssueReconciler", () => {
           remoteIssue(4, { author: null }),
           remoteIssue(5, {
             author: "operator",
-            parent: {
-              number: 99,
-              url: "https://github.com/acme/widgets/issues/99",
-              state: "OPEN",
-              isReadyLabeled: true,
-            },
+            parent: forgeIssueParent(
+              99,
+              "https://github.com/acme/widgets/issues/99",
+            ),
             parentPosition: 0,
           }),
           remoteIssue(6, {
             author: "teammate",
-            parent: {
-              number: 1,
-              url: "https://github.com/acme/widgets/issues/1",
-              state: "OPEN",
-              isReadyLabeled: true,
-            },
+            parent: forgeIssueParent(
+              1,
+              "https://github.com/acme/widgets/issues/1",
+            ),
             parentPosition: 0,
           }),
         ],
@@ -1358,10 +1410,10 @@ describe("IssueReconciler", () => {
       remoteIssue(2, {
         hierarchySupported: false,
         blockedBy: [
-          {
-            number: 99,
-            url: "https://dev.azure.com/acme/widgets/_workitems/edit/99",
-          },
+          forgeIssueRef(
+            99,
+            "https://dev.azure.com/acme/widgets/_workitems/edit/99",
+          ),
         ],
       }),
       remoteIssue(3, {
@@ -1415,13 +1467,232 @@ describe("IssueReconciler", () => {
           {
             issueNumber: 99,
             issueUrl: "https://dev.azure.com/acme/widgets/_workitems/edit/99",
+            nativeId: "99",
+            displayId: "99",
+          },
+        ])
+        expect(db.stored[1]?.issueTracker).toBe("azure-devops")
+        expect(db.stored[1]?.nativeId).toBe("2")
+      }),
+      db.layer,
+      github,
+      defaultGitLabLayer,
+      azureDevOps,
+    )
+  })
+
+  it("routes discovery through the configured Issue Tracker, not the hosting Forge", () => {
+    const githubHostedGitlabTracker = makeRepositoryRecord({
+      id: "repo-1",
+      forge: "github",
+      issueTracker: "gitlab",
+      forgeHost: "git.drupalcode.org",
+      projectPath: "project/oauth_client",
+      includeAllIssueAuthors: true,
+    })
+    const db = makeDbFixture({ issues: [] })
+    const gitlab = Layer.succeed(GitLabService, {
+      ...defaultGitLabShape,
+      listReadyIssues: ({ projectPath }) =>
+        Effect.sync(() => {
+          db.actions.push(`gitlab:${projectPath}`)
+          return [remoteIssue(4)]
+        }),
+    } satisfies GitLabServiceShape)
+    const github = makeGitHubLayer([remoteIssue(99)], db.actions)
+
+    return runReconciliation(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        const summary = yield* reconciler.reconcile(githubHostedGitlabTracker)
+
+        expect(summary.inserted).toBe(1)
+        expect(db.stored.map((issue) => issue.issueNumber)).toEqual([4])
+        expect(db.stored[0]?.issueTracker).toBe("gitlab")
+        expect(db.stored[0]?.nativeId).toBe("4")
+        expect(db.stored[0]?.displayId).toBe("4")
+        expect(db.actions).toContain("gitlab:project/oauth_client")
+        expect(db.actions.some((action) => action.startsWith("github:"))).toBe(
+          false,
+        )
+      }),
+      db.layer,
+      github,
+      gitlab,
+    )
+  })
+
+  it("does not list hosting-Forge Issues when the Issue Tracker is Linear", () => {
+    const linearTracked = makeRepositoryRecord({
+      id: "repo-1",
+      forge: "github",
+      issueTracker: "linear",
+      linearProjectId: "proj-1",
+      includeAllIssueAuthors: true,
+    })
+    const db = makeDbFixture({ issues: [] })
+    const github = makeGitHubLayer([remoteIssue(1)], db.actions)
+    const linear = Layer.succeed(LinearService, {
+      getAuthenticatedUserLogin: () => Effect.succeed("linear-user"),
+      listReadyIssues: () =>
+        Effect.succeed([
+          remoteIssue(123, {
+            nativeId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+            displayId: "ENG-123",
+            url: "https://linear.app/acme/issue/ENG-123",
+            author: "linear-user",
+          }),
+        ]),
+      listProjects: () => Effect.succeed([]),
+      listProjectWorkflow: () => Effect.succeed([]),
+      hasCredentials: () => Effect.succeed(true),
+      hasAmbientCredentials: () => Effect.succeed(true),
+    })
+
+    return runReconciliation(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        const summary = yield* reconciler.reconcile(linearTracked)
+
+        expect(summary.inserted).toBe(1)
+        expect(db.stored[0]?.issueTracker).toBe("linear")
+        expect(db.stored[0]?.nativeId).toBe(
+          "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        )
+        expect(db.stored[0]?.displayId).toBe("ENG-123")
+        expect(db.actions.some((action) => action.startsWith("github:"))).toBe(
+          false,
+        )
+      }),
+      db.layer,
+      github,
+      defaultGitLabLayer,
+      defaultAzureDevOpsLayer,
+      linear,
+    )
+  })
+
+  it("filters Linear Issues by the authenticated Linear user, not assignee", () => {
+    const linearTracked = makeRepositoryRecord({
+      id: "repo-1",
+      forge: "github",
+      issueTracker: "linear",
+      linearProjectId: "proj-1",
+      includeAllIssueAuthors: false,
+    })
+    const db = makeDbFixture({ issues: [] })
+    const github = makeGitHubLayer([], db.actions)
+    const linear = Layer.succeed(LinearService, {
+      getAuthenticatedUserLogin: () => Effect.succeed("linear-user"),
+      listReadyIssues: () =>
+        Effect.succeed([
+          remoteIssue(1, {
+            nativeId: "own-issue",
+            displayId: "ENG-1",
+            url: "https://linear.app/acme/issue/ENG-1",
+            author: "linear-user",
+          }),
+          remoteIssue(2, {
+            nativeId: "other-issue",
+            displayId: "ENG-2",
+            url: "https://linear.app/acme/issue/ENG-2",
+            author: "someone-else",
+          }),
+        ]),
+      listProjects: () => Effect.succeed([]),
+      listProjectWorkflow: () => Effect.succeed([]),
+      hasCredentials: () => Effect.succeed(true),
+      hasAmbientCredentials: () => Effect.succeed(true),
+    })
+
+    return runReconciliation(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        yield* reconciler.reconcile(linearTracked)
+        expect(db.stored.map((issue) => issue.displayId)).toEqual(["ENG-1"])
+      }),
+      db.layer,
+      github,
+      defaultGitLabLayer,
+      defaultAzureDevOpsLayer,
+      linear,
+    )
+  })
+
+  it("keeps Linear Issues blocked by unreadable native blockers", () => {
+    const linearTracked = makeRepositoryRecord({
+      id: "repo-1",
+      forge: "github",
+      issueTracker: "linear",
+      linearProjectId: "proj-1",
+      includeAllIssueAuthors: true,
+    })
+    const db = makeDbFixture({ issues: [] })
+    const github = makeGitHubLayer([], db.actions)
+    const linear = Layer.succeed(LinearService, {
+      getAuthenticatedUserLogin: () => Effect.succeed("linear-user"),
+      listReadyIssues: () =>
+        Effect.succeed([
+          remoteIssue(10, {
+            nativeId: "blocked-issue",
+            displayId: "ENG-10",
+            url: "https://linear.app/acme/issue/ENG-10",
+            author: "linear-user",
+            blockedBy: [
+              {
+                number: 1,
+                url: "https://linear.app/#unreadable-rel-1",
+                nativeId: "unreadable:rel-1",
+                displayId: "unreadable",
+              },
+            ],
+          }),
+        ]),
+      listProjects: () => Effect.succeed([]),
+      listProjectWorkflow: () => Effect.succeed([]),
+      hasCredentials: () => Effect.succeed(true),
+      hasAmbientCredentials: () => Effect.succeed(true),
+    })
+
+    return runReconciliation(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        yield* reconciler.reconcile(linearTracked)
+        expect(db.stored[0]?.blockedBy).toEqual([
+          {
+            issueNumber: 1,
+            issueUrl: "https://linear.app/#unreadable-rel-1",
+            nativeId: "unreadable:rel-1",
+            displayId: "unreadable",
           },
         ])
       }),
       db.layer,
       github,
       defaultGitLabLayer,
-      azureDevOps,
+      defaultAzureDevOpsLayer,
+      linear,
+    )
+  })
+
+  it("fails when Linear is selected without a mapped project", () => {
+    const linearTracked = makeRepositoryRecord({
+      id: "repo-1",
+      forge: "github",
+      issueTracker: "linear",
+      includeAllIssueAuthors: true,
+    })
+    const db = makeDbFixture({ issues: [] })
+    const github = makeGitHubLayer([], db.actions)
+
+    return runReconciliation(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        const error = yield* Effect.flip(reconciler.reconcile(linearTracked))
+        expect(error).toBeInstanceOf(LinearNotConfiguredError)
+      }),
+      db.layer,
+      github,
     )
   })
 })

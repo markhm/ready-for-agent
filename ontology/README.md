@@ -77,6 +77,10 @@ emits `packages/lifecycle-model/src/generated/work-item-state.ts` and
 - `FORGES` / `Forge` / `isForge` — the three supported Forge kinds
   (`github`, `gitlab`, `azure-devops`) from `rfa:Forge` `owl:oneOf`, in
   declared order. GraphQL keeps the existing string wire contract.
+- `ISSUE_TRACKERS` / `IssueTracker` / `isIssueTracker` — the Issue Tracker
+  kinds (`github`, `gitlab`, `azure-devops`, `linear`, `fp`) from
+  `rfa:IssueTracker` `owl:oneOf`. Linear and fp are Issue Trackers only, not
+  Forges. `DEFAULT_ISSUE_TRACKER_BY_FORGE` maps each Forge to itself.
 - `LIFECYCLE_TRANSITIONS` — every declared `rfa:Transition` as queryable data
   (`from`, `to`, `guard`, `reasonCode`).
 - `isDeclaredLifecycleTransition(from, to)` — membership in the declared
@@ -167,7 +171,7 @@ Notes on the modelling:
 
 ## The lifecycle state space
 
-16 operational Lifecycle Steps, 4 terminal Work Item states, and 141 declared
+16 operational Lifecycle Steps, 4 terminal Work Item states, and 180 declared
 transitions, each carrying a named guard and one Step Run reason code from the
 generated vocabulary.
 The happy path:
@@ -194,6 +198,7 @@ stateDiagram-v2
   mark_pr_ready_for_review --> merge_pr : settled, always merge mode
   decide_pr_merge --> merge_pr : clanker_merge_decision
   merge_pr --> local_cleanup : pull_request_merged
+  merge_pr --> close_issue : pull_request_merged (Linear tracker close-out)
   close_issue --> local_cleanup : issue_closed
   local_cleanup --> complete
   complete --> [*]
@@ -207,7 +212,9 @@ stateDiagram-v2
     Nearly every state can also reach
     failed (issue revalidation failed),
     abandoned (operator_abandon), or
-    local_cleanup (PR observed merged).
+    local_cleanup (PR observed merged), or
+    Close Issue then local cleanup when the
+    Original Issue Source is Linear.
   end note
 ```
 

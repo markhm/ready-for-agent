@@ -33,6 +33,8 @@ import {
   KeymaxxerService,
   type KeymaxxerServiceShape,
 } from "@ready-for-agent/keymaxxer-service"
+import { forgeIssueSource } from "@ready-for-agent/lifecycle-model"
+import type { LinearService } from "@ready-for-agent/linear-service"
 import type { LifecycleStepContext } from "../src/index.js"
 import {
   CreatePrCredentialError,
@@ -48,6 +50,7 @@ import {
   makeWorkItemId,
   stubActiveAgentBackendLayer,
   stubGrokActiveAgentBackendLayer,
+  stubLinearServiceLayer,
   workItemBranchName,
 } from "../src/index.js"
 import { describe, expect, it } from "bun:test"
@@ -269,6 +272,7 @@ const run = <A, E>(
     | KeymaxxerService
     | AgentBackend
     | ActiveAgentBackend
+    | LinearService
   >,
   layers: {
     db?: Layer.Layer<DbService>
@@ -278,6 +282,7 @@ const run = <A, E>(
     gitlab?: Layer.Layer<GitLabService>
     azureDevOps?: Layer.Layer<AzureDevOpsService>
     activeBackend?: Layer.Layer<ActiveAgentBackend>
+    linear?: Layer.Layer<LinearService>
   } = {},
 ): Promise<A> =>
   Effect.runPromise(
@@ -291,6 +296,7 @@ const run = <A, E>(
           layers.keymaxxer ?? stubKeymaxxer(),
           layers.opencode ?? stubOpencode(),
           layers.activeBackend ?? stubActiveAgentBackendLayer(),
+          layers.linear ?? stubLinearServiceLayer(),
         ),
       ),
       Effect.provide(PlatformLayer),
@@ -614,7 +620,8 @@ describe("createPr", () => {
       // Real shell assignment before git — not BASIC=… git … $BASIC prefix form.
       expect(pushCommand).toContain(')" && git ')
       // Empty-username Basic auth (":<pat>"), not GitLab's "oauth2:<pat>".
-      expect(pushCommand).toContain("printf ':%s'")
+      // The launch gate shell-quotes the repository script as one argument.
+      expect(pushCommand.replaceAll(`'"'"'`, "'")).toContain("printf ':%s'")
     }))
 
   it("reuses an existing exact-branch open Azure DevOps PR without creation", () =>
@@ -809,6 +816,136 @@ describe("createPr", () => {
         title: "feat: ship widgets",
         body: "Ships widgets for the dashboard.\n\nCloses #2039",
       })
+    }))
+
+  it("opens the hosting GitHub PR when Original Issue Source is GitLab", () =>
+    withTemp(async (root) => {
+      let githubLookups = 0
+      let gitlabLookups = 0
+      const context = baseContext(root, {
+        issueNumber: 91,
+        issueSource: forgeIssueSource({
+          tracker: "gitlab",
+          issueNumber: 91,
+          url: "https://git.drupalcode.org/project/widgets/-/issues/91",
+        }),
+        publicationTitle: "feat: ship widgets",
+        publicationBody: "Ships widgets.\n\nCloses #91",
+      })
+
+      const result = await run(createPr(context), {
+        github: stubGitHub({
+          findOpenPullRequestNumber: () => {
+            githubLookups += 1
+            return Effect.succeed(777)
+          },
+          createDraftPullRequest: () => Effect.succeed(999),
+        }),
+        gitlab: stubGitLab({
+          findOpenPullRequestNumber: () => {
+            gitlabLookups += 1
+            return Effect.succeed(null)
+          },
+          createDraftPullRequest: () => Effect.succeed(1),
+        }),
+      })
+
+      expect(result.pullRequestNumber).toBe(777)
+      expect(githubLookups).toBeGreaterThan(0)
+      expect(gitlabLookups).toBe(0)
+    }))
+
+  it("does not associate an Azure Boards Issue when Original Issue Source is GitHub", () =>
+    withTemp(async (root) => {
+      const linked: Array<{
+        pullRequestNumber: number
+        issueNumber: number
+      }> = []
+      const azureDevOpsDb = stubDbServiceLayer({
+        listRepositories: Effect.succeed([
+          makeRepositoryRecord({
+            forge: "azure-devops",
+            forgeHost: "dev.azure.com",
+            projectPath: "acme/widgets",
+            localPath: "/repos/acme-widgets",
+          }),
+        ]),
+      })
+      const context = baseContext(root, {
+        issueNumber: 42,
+        issueSource: forgeIssueSource({
+          tracker: "github",
+          issueNumber: 42,
+          url: "https://github.com/acme/widgets/issues/42",
+        }),
+        publicationTitle: "feat: refresh tokens",
+        publicationBody: "Implements refresh.\n\nCloses #42",
+      })
+
+      const result = await run(createPr(context), {
+        db: azureDevOpsDb,
+        azureDevOps: stubAzureDevOps({
+          findOpenPullRequestNumber: () => Effect.succeed(77),
+          ensurePullRequestLinkedToIssue: (
+            _repository,
+            pullRequestNumber,
+            issueNumber,
+          ) =>
+            Effect.sync(() => {
+              linked.push({ pullRequestNumber, issueNumber })
+            }),
+        }),
+      })
+
+      expect(result.pullRequestNumber).toBe(77)
+      expect(linked).toEqual([])
+    }))
+
+  it("publishes a GitHub PR with a Linear Issue reference and posts the PR link", () =>
+    withTemp(async (root) => {
+      const workItemId = makeWorkItemId()
+      const nativeId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+      const issueUrl = "https://linear.app/acme/issue/ENG-123"
+      const comments: Array<{ marker: string; body: string }> = []
+      let reconciled: { title: string; body: string } | null = null
+      const context = baseContext(root, {
+        workItemId,
+        issueNumber: 123,
+        issueSource: {
+          tracker: "linear",
+          nativeId,
+          displayId: "ENG-123",
+          url: issueUrl,
+        },
+        publicationTitle: "feat: ship linear execution",
+        publicationBody:
+          "Implements Linear ENG-123 in the GitHub repository.\n\nCloses #123",
+      })
+      const result = await run(createPr(context), {
+        github: stubGitHub({
+          findOpenPullRequestNumber: () => Effect.succeed(777),
+          updateOpenDraftPullRequestCopy: (_repository, _branch, input) => {
+            reconciled = input
+            return Effect.succeed(777)
+          },
+        }),
+        linear: stubLinearServiceLayer({
+          ensureMilestoneComment: (_id, marker, body) =>
+            Effect.sync(() => {
+              comments.push({ marker, body })
+            }),
+        }),
+      })
+
+      expect(result.pullRequestNumber).toBe(777)
+      expect(reconciled?.body).toContain("Linear: ENG-123")
+      expect(reconciled?.body).toContain(issueUrl)
+      expect(reconciled?.body).not.toContain("Closes #123")
+      expect(comments).toHaveLength(1)
+      expect(comments[0]?.marker).toContain("pull-request")
+      expect(comments[0]?.body).toContain(
+        "https://github.com/acme/widgets/pull/777",
+      )
     }))
 
   it("uses persisted harness fallback publication copy as the PR title and body", () =>

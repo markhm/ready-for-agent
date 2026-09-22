@@ -17,6 +17,10 @@ import {
 } from "@ready-for-agent/github-service"
 import { GitLabService } from "@ready-for-agent/gitlab-service"
 import { KeymaxxerService } from "@ready-for-agent/keymaxxer-service"
+import {
+  LinearService,
+  defaultLinearServiceShape,
+} from "@ready-for-agent/linear-service"
 import { DirectoryPicker, LocalGit } from "@ready-for-agent/local-git"
 import { QueueService } from "@ready-for-agent/queue-service"
 import { SqliteQueueServiceLive } from "@ready-for-agent/sqlite-queue-service"
@@ -232,6 +236,9 @@ describe("Hold approved merges during CI failure", () => {
       Layer.provideMerge(DbServiceLive),
       Layer.provideMerge(SqliteQueueServiceLive),
       Layer.provideMerge(DatabaseTest),
+      Layer.provideMerge(
+        Layer.succeed(LinearService, defaultLinearServiceShape),
+      ),
     ),
     githubLayer,
     Layer.succeed(KeymaxxerService, {
@@ -281,6 +288,7 @@ describe("Hold approved merges during CI failure", () => {
           jumpHint: false,
         }),
     }),
+    Layer.succeed(LinearService, defaultLinearServiceShape),
     Layer.succeed(LocalGit, {
       inspect: (path) =>
         Effect.succeed({
@@ -386,7 +394,7 @@ describe("Hold approved merges during CI failure", () => {
         const sql = yield* SqlClient.SqlClient
         const created = yield* lifecycle.implementNow(
           setup.repository.id,
-          setup.issue.issueNumber,
+          setup.issue.nativeId,
         )
         observe = () =>
           Effect.succeed({

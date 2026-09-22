@@ -25,7 +25,7 @@ rfa:Abandoned a rfa:ContextTerm .
 rfa:Forge
   a owl:Class, skos:Concept, rfa:ContextTerm ;
   skos:prefLabel "Forge"@en ;
-  skos:definition "A code-hosting platform kind the harness supports as a Repository's source of git hosting, Issues, and Pull Requests: GitHub, GitLab, or Azure DevOps. A Repository belongs to exactly one Forge, chosen when the Repository is added. Azure DevOps now has the same end-to-end lifecycle as GitHub and GitLab: remote detection, PAT-based authentication, Ready Issue listing/reconciliation (including native Predecessor/Successor blocking links, surfaced as blockedBy), draft Pull Request creation, PR Status Checks (build validation / branch policy evaluations), merge, and work item close-out with a completion summary are all implemented."@en ;
+  skos:definition "A code-hosting platform kind the harness supports as a Repository's source of git hosting and Pull Requests: GitHub, GitLab, or Azure DevOps. A Repository belongs to exactly one Forge, chosen when the Repository is added. Each Forge is also that Repository's default Issue Tracker; Linear and fp are not Forges. Azure DevOps now has the same end-to-end lifecycle as GitHub and GitLab: remote detection, PAT-based authentication, Ready Issue listing/reconciliation (including native Predecessor/Successor blocking links, surfaced as blockedBy), draft Pull Request creation, PR Status Checks (build validation / branch policy evaluations), merge, and work item close-out with a completion summary are all implemented."@en ;
   skos:hiddenLabel "Provider"@en, "issue source"@en, "platform"@en .
 
 [
@@ -41,7 +41,7 @@ rfa:Forge
   owl:annotatedSource rfa:Forge ;
   owl:annotatedProperty skos:hiddenLabel ;
   owl:annotatedTarget "issue source"@en ;
-  rfa:avoidanceRationale "too narrow — the Forge also hosts Pull Requests and checks"@en ;
+  rfa:avoidanceRationale "Issue tracking is independently configurable; the Issue Tracker is the issue source"@en ;
 ] .
 
 [
@@ -107,7 +107,7 @@ rfa:ProjectPath
 rfa:Repository
   a owl:Class, skos:Concept, rfa:ContextTerm ;
   skos:prefLabel "Repository"@en ;
-  skos:definition "A project on a Forge the harness is configured to work on, identified by Forge, Forge Host, and Project Path (case-insensitive identity; display casing preserved). One row per configured Repository identity; the harness keeps a single local clone of it (bare or working). Displayed as its Project Path — no separate display label. Forge, Forge Host, and Project Path are guessed from the local clone's remote when the Repository is added, verified against the Forge API, and may be corrected in Repository settings; changing them is rejected while any Work Item exists for the Repository."@en ;
+  skos:definition "A project on a Forge the harness is configured to work on, identified by Forge, Forge Host, and Project Path (case-insensitive identity; display casing preserved). One row per configured Repository identity; the harness keeps a single local clone of it (bare or working). Displayed as its Project Path — no separate display label. Forge, Forge Host, and Project Path are guessed from the local clone's remote when the Repository is added, verified against the Forge API, and may be corrected in Repository settings; changing them is rejected while any Work Item exists for the Repository. Adding a Repository automatically selects its hosting Forge as the Issue Tracker."@en ;
   skos:hiddenLabel "Repo"@en, "target"@en, "project"@en, "checkout"@en .
 
 [
@@ -213,7 +213,7 @@ rfa:Paused
 rfa:RepositorySettings
   a owl:Class, skos:Concept, rfa:ContextTerm ;
   skos:prefLabel "Repository settings"@en ;
-  skos:definition "Per-Repository operator preferences: Paused, selected CI Gate Definitions, optional Agent Backend override, optional build Agent Model selection, optional review Agent Model selection, Merge Policy, optional guaranteed-minimum concurrent Agent Turns floor (`guaranteedMinConcurrentAgentTurns`, null by default), Include all Issue Authors, and Wait for checks to start after ready for review (`waitForReadyForReviewChecks`, default true). Forge identity (Forge, Forge Host, and Project Path) is also corrected through Repository settings, subject to the Work Item gate described under Repository. An absent Agent Backend override inherits the Harness Config default Agent Backend. Build and review model selections are backend-scoped: each Agent Backend has its own optional overrides. An absent build model inherits the whole Harness build selection for the Repository's effective Agent Backend; an absent review model inherits the Harness review selection for that backend and then the resolved build selection; an explicit model with no Thinking Level uses that model's backend default. For a Work Item without an Explicit Work Item Execution Profile, build and review selections are resolved at each Agent Turn from current backend-scoped Repository settings falling back to backend-scoped Harness Config for the Work Item's captured Agent Backend, so a model settings change affects the next turn without rewriting the Work Item. Changing the Agent Backend override is rejected while the Repository has an unfinished Work Item whose routing depends on that effective backend; an unfinished Work Item with an Explicit Work Item Execution Profile does not block the change. An absent guaranteed-minimum Agent Turns floor is fully fair-share, identical to a Repository that never had one; setting or raising it is rejected when the sum of every Repository's floor would exceed Harness Config's `maxConcurrentAgentTurns`."@en ;
+  skos:definition "Per-Repository operator preferences: Paused, selected CI Gate Definitions, optional Agent Backend override, optional build Agent Model selection, optional review Agent Model selection, Merge Policy, optional guaranteed-minimum concurrent Agent Turns floor (`guaranteedMinConcurrentAgentTurns`, null by default), Include all Issue Authors, Wait for checks to start after ready for review (`waitForReadyForReviewChecks`, default true), Issue Tracker (a GitHub-hosted Repository may later select Linear), optional Linear project mapping, and team-specific Linear In Progress/Done workflow statuses. Forge identity (Forge, Forge Host, and Project Path) is also corrected through Repository settings, subject to the Work Item gate described under Repository. Adding a Repository still selects the hosting Forge as the Issue Tracker with no extra onboarding choice. An absent Agent Backend override inherits the Harness Config default Agent Backend. Build and review model selections are backend-scoped: each Agent Backend has its own optional overrides. An absent build model inherits the whole Harness build selection for the Repository's effective Agent Backend; an absent review model inherits the Harness review selection for that backend and then the resolved build selection; an explicit model with no Thinking Level uses that model's backend default. For a Work Item without an Explicit Work Item Execution Profile, build and review selections are resolved at each Agent Turn from current backend-scoped Repository settings falling back to backend-scoped Harness Config for the Work Item's captured Agent Backend, so a model settings change affects the next turn without rewriting the Work Item. Changing the Agent Backend override is rejected while the Repository has an unfinished Work Item whose routing depends on that effective backend; an unfinished Work Item with an Explicit Work Item Execution Profile does not block the change. An absent guaranteed-minimum Agent Turns floor is fully fair-share, identical to a Repository that never had one; setting or raising it is rejected when the sum of every Repository's floor would exceed Harness Config's `maxConcurrentAgentTurns`."@en ;
   skos:hiddenLabel "Project config"@en, "repo config file"@en .
 
 [
@@ -525,7 +525,7 @@ rfa:IncludeAllIssueAuthors
 rfa:IssueAuthor
   a owl:Class, skos:Concept, rfa:ContextTerm ;
   skos:prefLabel "Issue Author"@en ;
-  skos:definition "The Forge username of the user who opened an Issue, when the Forge provides one (the GitHub login or GitLab username); otherwise null. Fetched with Ready-labeled Issues, stored on the local Issue record, and used for author-scoped relevance when Include all Issue Authors is off."@en ;
+  skos:definition "The Issue Tracker's identifier of the user who opened an Issue, when the tracker provides one (the GitHub login, GitLab username, Azure DevOps display name, or Linear user id); otherwise null. Fetched with Ready-labeled Issues, stored on the local Issue record, and used for author-scoped relevance when Include all Issue Authors is off. Assignment does not substitute for authorship."@en ;
   skos:hiddenLabel "Assignee"@en, "reporter"@en .
 
 [
@@ -541,13 +541,13 @@ rfa:IssueAuthor
   owl:annotatedSource rfa:IssueAuthor ;
   owl:annotatedProperty skos:hiddenLabel ;
   owl:annotatedTarget "reporter"@en ;
-  rfa:avoidanceRationale "unless matching the Forge’s author field"@en ;
+  rfa:avoidanceRationale "unless matching the tracker’s author field"@en ;
 ] .
 
 rfa:OperatorForgeUser
   a owl:Class, skos:Concept, rfa:ContextTerm ;
   skos:prefLabel "Operator Forge User"@en ;
-  skos:definition "The Forge username of the authenticated principal for a Repository’s Forge credential path (Keymaxxer-injected token or ambient Forge CLI auth). Resolved via the Forge API viewer endpoint for that token during reconciliation when Include all Issue Authors is off; not a separate harness user account."@en ;
+  skos:definition "The authenticated principal for a Repository’s Issue Tracker credential path (Keymaxxer-injected token or ambient CLI/env auth). For Forge-hosted trackers this is the Forge username; for Linear it is the Linear user id. Resolved via the tracker’s viewer endpoint during reconciliation when Include all Issue Authors is off; not a separate harness user account."@en ;
   skos:hiddenLabel "Harness user"@en, "local operator account"@en .
 
 [
@@ -632,10 +632,106 @@ rfa:GitHubThrottled
   rfa:avoidanceRationale "the coordinator reacts to explicit evidence and does not proactively allocate quota."@en ;
 ] .
 
+rfa:IssueTracker
+  a owl:Class, skos:Concept, rfa:ContextTerm ;
+  skos:prefLabel "Issue Tracker"@en ;
+  skos:definition "A platform kind the harness uses as a Repository's source of Issues, independently of the Repository's Forge: GitHub, GitLab, Azure DevOps, Linear, or fp. Linear and fp are Issue Trackers only and are not code-hosting Forges. fp is Fiberplane's local-first issue tracker, reached through the fp CLI in a registered project directory; it is in the vocabulary ahead of its adapter and cannot yet be selected in Repository settings. A Repository has exactly one configured Issue Tracker; adding a Repository selects the hosting Forge's default without an extra onboarding choice."@en ;
+  skos:hiddenLabel "Forge"@en, "Linear as a Forge"@en, "provider"@en .
+
+[
+  a owl:Axiom ;
+  owl:annotatedSource rfa:IssueTracker ;
+  owl:annotatedProperty skos:hiddenLabel ;
+  owl:annotatedTarget "Forge"@en ;
+  rfa:avoidanceRationale "when referring to issue tracking"@en ;
+] .
+
+[
+  a owl:Axiom ;
+  owl:annotatedSource rfa:IssueTracker ;
+  owl:annotatedProperty skos:hiddenLabel ;
+  owl:annotatedTarget "Linear as a Forge"@en ;
+  rfa:avoidanceRationale "CONTEXT.md prefers Issue Tracker for this concept."@en ;
+] .
+
+[
+  a owl:Axiom ;
+  owl:annotatedSource rfa:IssueTracker ;
+  owl:annotatedProperty skos:hiddenLabel ;
+  owl:annotatedTarget "provider"@en ;
+  rfa:avoidanceRationale "CONTEXT.md prefers Issue Tracker for this concept."@en ;
+] .
+
+rfa:IssueNativeIdentity
+  a owl:Class, skos:Concept, rfa:ContextTerm ;
+  skos:prefLabel "Issue Native Identity"@en ;
+  skos:definition "The Issue Tracker's own durable identifier for an Issue, scoped to that Issue's Original Issue Source. Distinct from the Issue Display Identifier and URL; not required to be a positive integer."@en ;
+  skos:hiddenLabel "issue number"@en, "iid"@en .
+
+[
+  a owl:Axiom ;
+  owl:annotatedSource rfa:IssueNativeIdentity ;
+  owl:annotatedProperty skos:hiddenLabel ;
+  owl:annotatedTarget "issue number"@en ;
+  rfa:avoidanceRationale "too GitHub-specific as the only identity"@en ;
+] .
+
+[
+  a owl:Axiom ;
+  owl:annotatedSource rfa:IssueNativeIdentity ;
+  owl:annotatedProperty skos:hiddenLabel ;
+  owl:annotatedTarget "iid"@en ;
+  rfa:avoidanceRationale "GitLab-specific"@en ;
+] .
+
+rfa:IssueDisplayIdentifier
+  a owl:Class, skos:Concept, rfa:ContextTerm ;
+  skos:prefLabel "Issue Display Identifier"@en ;
+  skos:definition "The human-readable identifier shown for an Issue, such as a GitHub issue number or a Linear issue key. It may change without changing Issue Native Identity."@en ;
+  skos:hiddenLabel "Issue Native Identity"@en, "URL"@en .
+
+[
+  a owl:Axiom ;
+  owl:annotatedSource rfa:IssueDisplayIdentifier ;
+  owl:annotatedProperty skos:hiddenLabel ;
+  owl:annotatedTarget "Issue Native Identity"@en ;
+  rfa:avoidanceRationale "CONTEXT.md prefers Issue Display Identifier for this concept."@en ;
+] .
+
+[
+  a owl:Axiom ;
+  owl:annotatedSource rfa:IssueDisplayIdentifier ;
+  owl:annotatedProperty skos:hiddenLabel ;
+  owl:annotatedTarget "URL"@en ;
+  rfa:avoidanceRationale "CONTEXT.md prefers Issue Display Identifier for this concept."@en ;
+] .
+
+rfa:OriginalIssueSource
+  a owl:Class, skos:Concept, rfa:ContextTerm ;
+  skos:prefLabel "Original Issue Source"@en ;
+  skos:definition "The Issue Tracker and Issue Native Identity captured on a Work Item at creation, together with the Issue Display Identifier and URL needed for historical references. Issue operations for that Work Item resolve against this source after the Repository's Issue Tracker setting changes. Other Issue contents remain live rather than snapshotted."@en ;
+  skos:hiddenLabel "current tracker setting"@en, "issue snapshot"@en .
+
+[
+  a owl:Axiom ;
+  owl:annotatedSource rfa:OriginalIssueSource ;
+  owl:annotatedProperty skos:hiddenLabel ;
+  owl:annotatedTarget "current tracker setting"@en ;
+  rfa:avoidanceRationale "CONTEXT.md prefers Original Issue Source for this concept."@en ;
+] .
+
+[
+  a owl:Axiom ;
+  owl:annotatedSource rfa:OriginalIssueSource ;
+  owl:annotatedProperty skos:hiddenLabel ;
+  owl:annotatedTarget "issue snapshot"@en ;
+  rfa:avoidanceRationale "CONTEXT.md prefers Original Issue Source for this concept."@en ;
+] .
+
 rfa:Issue
   a owl:Class, skos:Concept, rfa:ContextTerm ;
   skos:prefLabel "Issue"@en ;
-  skos:definition "An issue on the Repository's Forge, identified within that Repository by a positive integer issue number (the iid in GitLab) and represented locally with its title, body, web URL, creation time, Forge state, and optional Issue Author. The harness may retain a local representation for later use, but the Forge remains authoritative. GitLab issues and merge requests come from separate per-project number sequences, so a bare GitLab number is ambiguous across the two kinds — unlike GitHub's single shared sequence."@en ;
+  skos:definition "An issue on the Repository's configured Issue Tracker, identified by a source-scoped Issue Native Identity distinct from its Issue Display Identifier and URL, and represented locally with its title, body, web URL, creation time, tracker state, and optional Issue Author. The harness may retain a local representation for later use, but the Issue Tracker remains authoritative. Existing Forge-hosted Issues still use a positive integer issue number (the iid in GitLab) as both native identity and display identifier. GitLab issues and merge requests come from separate per-project number sequences, so a bare GitLab number is ambiguous across the two kinds — unlike GitHub's single shared sequence."@en ;
   skos:hiddenLabel "Ticket"@en, "task"@en .
 
 [
@@ -662,7 +758,7 @@ rfa:IssueStore
 rfa:IssueReconciler
   a owl:Class, skos:Concept, rfa:ContextTerm ;
   skos:prefLabel "Issue Reconciler"@en ;
-  skos:definition "The sole harness capability that changes the Issue store, deriving one Repository's Relevant Issues from the Forge's authoritative set of Ready-labeled Issues. Issues that are not Relevant, including Issues whose ready label was removed, are absent from the Issue store after reconciliation."@en ;
+  skos:definition "The sole harness capability that changes the Issue store, deriving one Repository's Relevant Issues from the configured Issue Tracker's authoritative set of Ready-labeled Issues. Issues that are not Relevant, including Issues whose ready label was removed, are absent from the Issue store after reconciliation."@en ;
   skos:hiddenLabel "GitHub Reconciler"@en, "Issue Synchronizer"@en .
 
 [
@@ -684,7 +780,7 @@ rfa:IssueReconciler
 rfa:RefreshJob
   a owl:Class, skos:Concept, rfa:ContextTerm ;
   skos:prefLabel "Refresh Job"@en ;
-  skos:definition "A durable request for the Issue Reconciler to reconcile one Repository. Acceptance of a Refresh Job does not mean reconciliation has completed. After reconciliation succeeds, competing active Issue-closing PRs stop eligible unfinished Work Items to Needs Human; then unfinished Work Items that own a Work Item PR are inspected for merge outcomes and, for certain Needs Human handoffs, mergeability: a merged PR advances local cleanup toward Complete (including Work Items paused because the Issue closed while the PR was open); closed-unmerged Abandon applies when the latest step was Decide PR Merge, Merge PR, or Resolve PR Merge Conflict; Decide/Merge Needs Human with a conflicting open PR advances to Resolve PR Merge Conflict; Resolve Needs Human whose open PR is no longer conflicting advances to Watch PR Status Checks. Refresh does not auto-Start a Work Item paused for a closed Issue with an open PR. After those owned-PR inspections, unfinished Attention Work Items that do not own a Work Item PR and whose Issue is no longer Relevant (closed, unlabelled, or gone from the Issue store) advance local cleanup toward Complete without posting an Issue comment; running Step Runs and Waiting for blockers are unchanged."@en ;
+  skos:definition "A durable request for the Issue Reconciler to reconcile one Repository. Acceptance of a Refresh Job does not mean reconciliation has completed. After reconciliation succeeds, competing active Issue-closing PRs stop eligible unfinished Work Items to Needs Human; then unfinished Work Items that own a Work Item PR are inspected for merge outcomes and, for certain Needs Human handoffs, mergeability: a merged PR advances Close Issue when the Original Issue Source is Linear, otherwise local cleanup, toward Complete (including Work Items paused because the Issue closed while the PR was open); closed-unmerged Abandon applies when the latest step was Decide PR Merge, Merge PR, or Resolve PR Merge Conflict; Decide/Merge Needs Human with a conflicting open PR advances to Resolve PR Merge Conflict; Resolve Needs Human whose open PR is no longer conflicting advances to Watch PR Status Checks. Refresh does not auto-Start a Work Item paused for a closed Issue with an open PR. After those owned-PR inspections, unfinished Attention Work Items that do not own a Work Item PR and whose Issue is no longer Relevant (closed, unlabelled, or gone from the Issue store) advance local cleanup toward Complete without posting an Issue comment; running Step Runs and Waiting for blockers are unchanged."@en ;
   skos:hiddenLabel "Refresh"@en, "sync job"@en .
 
 [
@@ -1672,7 +1768,7 @@ rfa:LeafIssue
 rfa:WorkItem
   a owl:Class, skos:Concept, rfa:ContextTerm ;
   skos:prefLabel "Work Item"@en ;
-  skos:definition "A durable record of one operator-requested attempt to complete a Leaf Issue's objective through the work lifecycle, capturing an Agent Backend as provenance and routing authority, an optional Explicit Work Item Execution Profile, and an optional Work Item Merge Policy pin (`null` inherits the live Repository Merge Policy). Without an explicit profile, each Agent Turn resolves build and review selections from current backend-scoped Repository settings falling back to Harness Config. With one, the profile's build selection is used for Implement, Review Fix Rounds, Commit, and related steps, while its review selection is used only for reviewing passes inside Review. It references the current Issue by Repository and issue number, captures the Issue title for identification after the Issue leaves the Issue store, records canonical publication title and body after Commit generates them (agent-authored when valid, with in-directory image links rewritten to GitHub user-attachment URLs before persist, otherwise harness fallback copy from the Issue identity; shared by git commit and draft PR), records the exact identity of its pull request when one is created, and records the completion summary for a No-Change Outcome. Other Issue contents remain live rather than snapshotted. A Leaf Issue may produce multiple Work Items over time, but at most one may be unfinished at a time."@en ;
+  skos:definition "A durable record of one operator-requested attempt to complete a Leaf Issue's objective through the work lifecycle, capturing an Agent Backend as provenance and routing authority, an optional Explicit Work Item Execution Profile, and an optional Work Item Merge Policy pin (`null` inherits the live Repository Merge Policy). Without an explicit profile, each Agent Turn resolves build and review selections from current backend-scoped Repository settings falling back to Harness Config. With one, the profile's build selection is used for Implement, Review Fix Rounds, Commit, and related steps, while its review selection is used only for reviewing passes inside Review. It captures the Original Issue Source and the Issue title for identification after the Issue leaves the Issue store, retains the positive integer issue number for existing Forge-hosted Issues, records canonical publication title and body after Commit generates them (agent-authored when valid, with in-directory image links rewritten to GitHub user-attachment URLs before persist, otherwise harness fallback copy from the Issue identity; shared by git commit and draft PR), records the exact identity of its pull request when one is created, and records the completion summary for a No-Change Outcome. Other Issue contents remain live rather than snapshotted. A Leaf Issue may produce multiple Work Items over time, but at most one may be unfinished at a time."@en ;
   skos:hiddenLabel "Issue lifecycle"@en, "implementation job"@en, "attempt"@en .
 
 [
@@ -2016,7 +2112,7 @@ rfa:AcceptedReviewOutcome
 rfa:ClearedReviewOutcome
   a owl:Class, skos:Concept, rfa:ContextTerm ;
   skos:prefLabel "Cleared Review Outcome"@en ;
-  skos:definition "A successful Review outcome in which the build model rejects all low- or medium-severity Review Findings as invalid without changing the worktree. It advances to Commit with a recorded rationale; high-severity findings cannot be cleared this way."@en ;
+  skos:definition "A successful Review outcome in which the build model clears all Review Findings of any reported severity without product changes, citing evidence that they are disproven, pre-existing and outside the agreed scope, or covered by an explicit operator-accepted limitation. It advances to Commit with a recorded rationale; valid unresolved high-severity findings still require human attention."@en ;
   skos:hiddenLabel "Clean review"@en, "deferred finding"@en, "fixed finding"@en .
 
 [
@@ -2158,7 +2254,7 @@ rfa:Commit
 rfa:CloseIssue
   a owl:Class, skos:Concept, rfa:ContextTerm ;
   skos:prefLabel "Close Issue"@en ;
-  skos:definition "The Lifecycle Step that publishes the No-Change Outcome's completion summary on the Work Item's Issue and closes that Issue after Assess Changes or a confirmed late No-Change Outcome from Commit. It precedes local cleanup so the remote completion outcome is preserved even when cleanup must be retried."@en ;
+  skos:definition "The Lifecycle Step that publishes a completion summary on the Work Item's Issue and closes that Issue. It runs after a confirmed No-Change Outcome from Assess Changes or Commit, and after a confirmed GitHub merge when the Original Issue Source is Linear. It precedes local cleanup so the remote completion outcome is preserved even when cleanup must be retried. An already-closed or already-completed Issue is accepted; retries reuse the existing summary instead of duplicating it."@en ;
   skos:hiddenLabel "Complete Work Item"@en, "local cleanup"@en .
 
 [

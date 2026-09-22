@@ -20,6 +20,7 @@ import {
   useRef,
   useState,
 } from "react"
+import { formatIssueDisplayId } from "@ready-for-agent/lifecycle-model"
 import { COMPLETED_WORK_ITEMS_DEFAULT_PAGE_SIZE as completedWorkItemsDefaultPageSize } from "@ready-for-agent/work-item-lifecycle/jobs-completed-window"
 import { formatAgentBackendStatusLabel } from "./agent-backend-status-label.js"
 import { AgentBackendWarnings } from "./agent-backend-warnings.js"
@@ -43,6 +44,7 @@ import {
 import { Banner } from "./banner.js"
 import { repositoryCardCollapseId, useCardCollapsed } from "./card-collapse.js"
 import { CardCollapseToggle } from "./card-collapse-toggle.js"
+import { createConfigQuery } from "./config-query.js"
 import { Copy } from "./copy.js"
 import type { ImplementWithSubmitInput } from "./execution-profile-draft.js"
 import { ExecutionProfileSummary } from "./execution-profile-summary.js"
@@ -107,6 +109,7 @@ import {
   forgeDisplayName,
   repositoriesQuery,
 } from "./repositories-query.js"
+import { RepositoryCiGateCardDetails } from "./repository-ci-gate-card.js"
 import {
   RepositorySettingsCiGateSection,
   ciGateCatalogViewFromQuery,
@@ -148,28 +151,7 @@ const FORGE_TOKEN_SCOPES_DOC_URL =
 const graphql = createHarnessGraphqlClient({ batch: true })
 // Forge CI Gate catalog listing must not pin co-batched config/models/backends.
 const graphqlUnbatched = createHarnessGraphqlClient({ batch: false })
-
-const configQuery = {
-  queryKey: ["config"],
-  queryFn: async () => {
-    const result = await graphql.query({
-      config: {
-        selectedAgentBackend: true,
-        defaultModel: true,
-        defaultThinkingLevel: true,
-        reviewModel: true,
-        reviewThinkingLevel: true,
-        maxConcurrentAgentTurns: true,
-        maxConcurrentWorkItems: true,
-        // Keep selection aligned with Harness Settings so shared cache never
-        // drops unfinished / scoped gate fields.
-        unfinishedWorkItemCount: true,
-        blockingUnfinishedWorkItemCount: true,
-      },
-    })
-    return result.config
-  },
-}
+const configQuery = createConfigQuery(graphql)
 
 type AgentBackendInfo = {
   id: string
@@ -257,6 +239,9 @@ export const issuesQuery = (repositoryId: string) => ({
         id: true,
         repositoryId: true,
         issueNumber: true,
+        issueTracker: true,
+        nativeId: true,
+        displayId: true,
         title: true,
         url: true,
         state: true,
@@ -264,11 +249,15 @@ export const issuesQuery = (repositoryId: string) => ({
         parent: {
           issueNumber: true,
           issueUrl: true,
+          nativeId: true,
+          displayId: true,
         },
         hasChildren: true,
         blockedBy: {
           issueNumber: true,
           issueUrl: true,
+          nativeId: true,
+          displayId: true,
         },
       },
     })
@@ -280,6 +269,9 @@ type RepositoryIssue = {
   id: string
   repositoryId: string
   issueNumber: number
+  issueTracker: string
+  nativeId: string
+  displayId: string
   title: string
   url: string
   state: "OPEN" | "CLOSED"
@@ -287,11 +279,15 @@ type RepositoryIssue = {
   parent: {
     issueNumber: number
     issueUrl: string
+    nativeId: string
+    displayId: string
   } | null
   hasChildren: boolean
   blockedBy: readonly {
     issueNumber: number
     issueUrl: string
+    nativeId: string
+    displayId: string
   }[]
 }
 
@@ -318,6 +314,12 @@ export type WorkItem = {
   id: string
   repositoryId: string
   issueNumber: number
+  issueSource: {
+    tracker: string
+    nativeId: string
+    displayId: string
+    url: string
+  }
   issueTitle: string | null
   pullRequestNumber: number | null
   agentBackend: { id: string; label: string }
@@ -389,6 +391,12 @@ const workItemFields = {
   id: true,
   repositoryId: true,
   issueNumber: true,
+  issueSource: {
+    tracker: true,
+    nativeId: true,
+    displayId: true,
+    url: true,
+  },
   issueTitle: true,
   pullRequestNumber: true,
   agentBackend: { id: true, label: true },
@@ -932,6 +940,123 @@ function RepositoryCard({
     ...ciGateCatalogQuery(repository.id),
     enabled: dialogOpen,
   })
+  const [issueTracker, setIssueTracker] = useState(repository.issueTracker)
+  const [linearProjectId, setLinearProjectId] = useState(
+    repository.linearProjectId ?? "",
+  )
+  const [linearWorkflowStatuses, setLinearWorkflowStatuses] = useState(() => [
+    ...repository.linearWorkflowStatuses,
+  ])
+  const [linearTokenCreated, setLinearTokenCreated] = useState(false)
+  const linearEnabled = issueTracker === "linear"
+  const linearCredential = useQuery({
+    queryKey: ["linearCredential"],
+    enabled: dialogOpen && linearEnabled,
+    queryFn: async () => {
+      const result = await graphql.query({
+        linearCredential: {
+          configured: true,
+          secretName: true,
+          creationUrl: true,
+        },
+      })
+      return result.linearCredential
+    },
+  })
+  const linearProjects = useQuery({
+    queryKey: ["linearProjects"],
+    enabled:
+      dialogOpen && linearEnabled && linearCredential.data?.configured === true,
+    queryFn: async () => {
+      const result = await graphql.query({
+        linearProjects: {
+          id: true,
+          name: true,
+          url: true,
+        },
+      })
+      return result.linearProjects
+    },
+  })
+  const linearWorkflow = useQuery({
+    queryKey: ["linearProjectWorkflow", linearProjectId],
+    enabled:
+      dialogOpen &&
+      linearEnabled &&
+      linearProjectId !== "" &&
+      linearCredential.data?.configured === true,
+    queryFn: async () => {
+      const result = await graphql.query({
+        linearProjectWorkflow: {
+          __args: { projectId: linearProjectId },
+          teamId: true,
+          teamKey: true,
+          teamName: true,
+          suggestedInProgressStateId: true,
+          suggestedDoneStateId: true,
+          states: {
+            id: true,
+            name: true,
+            type: true,
+            position: true,
+          },
+        },
+      })
+      return result.linearProjectWorkflow
+    },
+  })
+  const linearRequestError =
+    linearCredential.error ?? linearProjects.error ?? linearWorkflow.error
+  useEffect(() => {
+    const teams = linearWorkflow.data
+    if (teams === undefined || teams.length === 0) {
+      return
+    }
+    setLinearWorkflowStatuses((current) => {
+      if (current.length > 0) {
+        return current
+      }
+      return teams.flatMap((team) => {
+        const inProgress = team.states.find(
+          (state) => state.id === team.suggestedInProgressStateId,
+        )
+        const done = team.states.find(
+          (state) => state.id === team.suggestedDoneStateId,
+        )
+        if (inProgress === undefined || done === undefined) {
+          return []
+        }
+        return [
+          {
+            teamId: team.teamId,
+            teamKey: team.teamKey,
+            teamName: team.teamName,
+            inProgressStateId: inProgress.id,
+            inProgressStateName: inProgress.name,
+            doneStateId: done.id,
+            doneStateName: done.name,
+          },
+        ]
+      })
+    })
+  }, [linearWorkflow.data])
+
+  const addLinearApiKey = useMutation({
+    mutationFn: async () => {
+      const result = await graphql.mutation({
+        addLinearApiKey: {
+          configured: true,
+          secretName: true,
+          creationUrl: true,
+        },
+      })
+      return result.addLinearApiKey
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["linearCredential"] })
+      void queryClient.invalidateQueries({ queryKey: ["linearProjects"] })
+    },
+  })
   const [forge, setForge] = useState<Forge>(repository.forge)
   const [forgeHost, setForgeHost] = useState(repository.forgeHost)
   const [projectPath, setProjectPath] = useState(repository.projectPath)
@@ -1009,6 +1134,18 @@ function RepositoryCard({
       mergePolicy: "OFF" | "CLASSIFY" | "ALWAYS"
       includeAllIssueAuthors: boolean
       waitForReadyForReviewChecks: boolean
+      issueTracker?: string
+      linearProjectId?: string | null
+      linearProjectName?: string | null
+      linearWorkflowStatuses?: {
+        teamId: string
+        teamKey: string
+        teamName: string
+        inProgressStateId: string
+        inProgressStateName: string
+        doneStateId: string
+        doneStateName: string
+      }[]
       selectedCiGateDefinitionIdentities: string[]
     }) => {
       const result = await graphql.mutation({
@@ -1030,6 +1167,18 @@ function RepositoryCard({
           mergePolicy: true,
           includeAllIssueAuthors: true,
           waitForReadyForReviewChecks: true,
+          issueTracker: true,
+          linearProjectId: true,
+          linearProjectName: true,
+          linearWorkflowStatuses: {
+            teamId: true,
+            teamKey: true,
+            teamName: true,
+            inProgressStateId: true,
+            inProgressStateName: true,
+            doneStateId: true,
+            doneStateName: true,
+          },
           selectedCiGateDefinitions: {
             identity: true,
             displayLabel: true,
@@ -1168,6 +1317,10 @@ function RepositoryCard({
     setReviewVariant(repository.reviewThinkingLevel ?? "")
     setMergePolicy(repository.mergePolicy)
     setIncludeAllIssueAuthors(repository.includeAllIssueAuthors)
+    setIssueTracker(repository.issueTracker)
+    setLinearProjectId(repository.linearProjectId ?? "")
+    setLinearWorkflowStatuses([...repository.linearWorkflowStatuses])
+    setLinearTokenCreated(false)
     setWaitForReadyForReviewChecks(repository.waitForReadyForReviewChecks)
     setSelectedCiGateIdentities(
       repository.selectedCiGateDefinitions.map(
@@ -1715,6 +1868,21 @@ function RepositoryCard({
       mergePolicy,
       includeAllIssueAuthors,
       waitForReadyForReviewChecks,
+      issueTracker: forge === "github" ? issueTracker : forge,
+      linearProjectId:
+        forge === "github" && issueTracker === "linear"
+          ? linearProjectId
+          : null,
+      linearProjectName:
+        forge === "github" && issueTracker === "linear"
+          ? (linearProjects.data?.find(
+              (project) => project.id === linearProjectId,
+            )?.name ?? repository.linearProjectName)
+          : null,
+      linearWorkflowStatuses:
+        forge === "github" && issueTracker === "linear"
+          ? [...linearWorkflowStatuses]
+          : [],
       selectedCiGateDefinitionIdentities: [...selectedCiGateIdentities],
     })
   }
@@ -2142,9 +2310,17 @@ function RepositoryCard({
                   <select
                     className={ui.dialogInput}
                     value={forge}
-                    onChange={(event) =>
-                      setForge(decodeForge(event.target.value))
-                    }
+                    onChange={(event) => {
+                      const next = decodeForge(event.target.value)
+                      setForge(next)
+                      if (next !== "github") {
+                        setIssueTracker(next)
+                        setLinearProjectId("")
+                        setLinearWorkflowStatuses([])
+                      } else if (issueTracker !== "linear") {
+                        setIssueTracker("github")
+                      }
+                    }}
                   >
                     <option value="github">GitHub</option>
                     <option value="gitlab">GitLab</option>
@@ -2174,6 +2350,252 @@ function RepositoryCard({
                   are blocked after this Repository has any Work Item.
                 </span>
               </section>
+
+              {forge === "github" && (
+                <section
+                  className={ui.dialogSection}
+                  aria-labelledby={`repo-sec-tracker-${repository.id}`}
+                >
+                  <div className={ui.dialogSectionHead}>
+                    <h3
+                      id={`repo-sec-tracker-${repository.id}`}
+                      className={ui.dialogSectionTitle}
+                    >
+                      Issue Tracker
+                    </h3>
+                    <span className={ui.dialogSectionMeta}>
+                      Linear optional
+                    </span>
+                  </div>
+                  <label className={ui.dialogField}>
+                    Issue Tracker
+                    <select
+                      className={ui.dialogInput}
+                      value={issueTracker}
+                      onChange={(event) => setIssueTracker(event.target.value)}
+                    >
+                      <option value="github">GitHub</option>
+                      <option value="linear">Linear</option>
+                    </select>
+                    <span className={ui.dialogFieldHint}>
+                      Adding this Repository used GitHub automatically. Linear
+                      maps one project to this Repository. Open Issues still
+                      need the ready-for-agent label.
+                    </span>
+                  </label>
+                  {issueTracker === "linear" && (
+                    <>
+                      {linearCredential.data !== undefined &&
+                        !linearCredential.data.configured && (
+                          <Banner
+                            className={ui.bannerCompact}
+                            tone="alarm"
+                            tag="Attention"
+                            role={addLinearApiKey.isError ? "alert" : "status"}
+                            action={
+                              linearTokenCreated ? (
+                                <button
+                                  type="button"
+                                  className={ui.platePrimary}
+                                  disabled={addLinearApiKey.isPending}
+                                  onClick={() => addLinearApiKey.mutate()}
+                                >
+                                  {addLinearApiKey.isPending
+                                    ? "Waiting for Keymaxxer"
+                                    : "Store in Keymaxxer"}
+                                </button>
+                              ) : (
+                                <a
+                                  className={ui.platePrimary}
+                                  href={linearCredential.data.creationUrl}
+                                  onClick={() => setLinearTokenCreated(true)}
+                                  rel="noreferrer"
+                                  target="_blank"
+                                >
+                                  Create Linear API key
+                                </a>
+                              )
+                            }
+                          >
+                            <p className="m-0 font-semibold">
+                              Linear API key required
+                            </p>
+                            <p className="m-0 mt-1">
+                              Store a personal Linear API key as{" "}
+                              <code className={ui.guidanceCode}>
+                                {linearCredential.data.secretName}
+                              </code>
+                              . It is independent of this Repository's GitHub
+                              token.
+                            </p>
+                            {addLinearApiKey.isError ? (
+                              <p className="m-0 mt-1">
+                                Keymaxxer setup was cancelled or failed.
+                              </p>
+                            ) : null}
+                          </Banner>
+                        )}
+                      {(linearCredential.isError ||
+                        linearProjects.isError ||
+                        linearWorkflow.isError) && (
+                        <Banner
+                          className={ui.bannerCompact}
+                          tone="alarm"
+                          tag="Error"
+                          role="alert"
+                        >
+                          {startWorkBannerMessage({
+                            error: linearRequestError,
+                            fallback:
+                              "Linear request failed. Check the API key and try again.",
+                          })}
+                        </Banner>
+                      )}
+                      <label className={ui.dialogField}>
+                        Linear project
+                        <select
+                          className={ui.dialogInput}
+                          value={linearProjectId}
+                          disabled={linearCredential.data?.configured !== true}
+                          onChange={(event) => {
+                            setLinearProjectId(event.target.value)
+                            setLinearWorkflowStatuses([])
+                          }}
+                        >
+                          <option value="">Select a project</option>
+                          {(linearProjects.data ?? []).map((project) => (
+                            <option key={project.id} value={project.id}>
+                              {project.name}
+                            </option>
+                          ))}
+                          {linearProjectId !== "" &&
+                            !(linearProjects.data ?? []).some(
+                              (project) => project.id === linearProjectId,
+                            ) && (
+                              <option value={linearProjectId}>
+                                {repository.linearProjectName ??
+                                  linearProjectId}
+                              </option>
+                            )}
+                        </select>
+                      </label>
+                      {(linearWorkflow.data ?? []).map((team) => {
+                        const selection = linearWorkflowStatuses.find(
+                          (entry) => entry.teamId === team.teamId,
+                        )
+                        const inProgressId =
+                          selection?.inProgressStateId ??
+                          team.suggestedInProgressStateId ??
+                          ""
+                        const doneId =
+                          selection?.doneStateId ??
+                          team.suggestedDoneStateId ??
+                          ""
+                        const updateTeam = (
+                          field: "inProgress" | "done",
+                          stateId: string,
+                        ) => {
+                          const state = team.states.find(
+                            (candidate) => candidate.id === stateId,
+                          )
+                          if (state === undefined) return
+                          setLinearWorkflowStatuses((current) => {
+                            const next = current.filter(
+                              (entry) => entry.teamId !== team.teamId,
+                            )
+                            const previous = current.find(
+                              (entry) => entry.teamId === team.teamId,
+                            )
+                            next.push({
+                              teamId: team.teamId,
+                              teamKey: team.teamKey,
+                              teamName: team.teamName,
+                              inProgressStateId:
+                                field === "inProgress"
+                                  ? state.id
+                                  : (previous?.inProgressStateId ??
+                                    team.suggestedInProgressStateId ??
+                                    ""),
+                              inProgressStateName:
+                                field === "inProgress"
+                                  ? state.name
+                                  : (previous?.inProgressStateName ??
+                                    team.states.find(
+                                      (candidate) =>
+                                        candidate.id ===
+                                        (previous?.inProgressStateId ??
+                                          team.suggestedInProgressStateId),
+                                    )?.name ??
+                                    ""),
+                              doneStateId:
+                                field === "done"
+                                  ? state.id
+                                  : (previous?.doneStateId ??
+                                    team.suggestedDoneStateId ??
+                                    ""),
+                              doneStateName:
+                                field === "done"
+                                  ? state.name
+                                  : (previous?.doneStateName ??
+                                    team.states.find(
+                                      (candidate) =>
+                                        candidate.id ===
+                                        (previous?.doneStateId ??
+                                          team.suggestedDoneStateId),
+                                    )?.name ??
+                                    ""),
+                            })
+                            return next
+                          })
+                        }
+                        return (
+                          <div key={team.teamId} className={ui.dialogField}>
+                            <span className="font-semibold">
+                              {team.teamName} ({team.teamKey})
+                            </span>
+                            <label className={ui.dialogField}>
+                              In Progress
+                              <select
+                                className={ui.dialogInput}
+                                value={inProgressId}
+                                onChange={(event) =>
+                                  updateTeam("inProgress", event.target.value)
+                                }
+                              >
+                                {team.states
+                                  .filter((state) => state.type === "started")
+                                  .map((state) => (
+                                    <option key={state.id} value={state.id}>
+                                      {state.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            </label>
+                            <label className={ui.dialogField}>
+                              Done
+                              <select
+                                className={ui.dialogInput}
+                                value={doneId}
+                                onChange={(event) =>
+                                  updateTeam("done", event.target.value)
+                                }
+                              >
+                                {team.states
+                                  .filter((state) => state.type === "completed")
+                                  .map((state) => (
+                                    <option key={state.id} value={state.id}>
+                                      {state.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            </label>
+                          </div>
+                        )
+                      })}
+                    </>
+                  )}
+                </section>
+              )}
 
               <section
                 className={ui.dialogSection}
@@ -2588,6 +3010,7 @@ function RepositoryCard({
                 selectedIdentities={selectedCiGateIdentities}
                 onSelectedIdentitiesChange={setSelectedCiGateIdentities}
                 status={{
+                  disabled: repository.ciGate.status === "DISABLED",
                   statusLabel: ciGateStatusLabel(repository.ciGate.status),
                   diagnostic: repository.ciGate.diagnostic,
                   activeIncidentSummary:
@@ -2724,59 +3147,7 @@ function RepositoryCard({
               <div className={ui.repoMetaRow}>
                 <dt>CI Gate</dt>
                 <dd>
-                  {ciGateStatusLabel(repository.ciGate.status)}
-                  {repository.ciGate.diagnostic !== null ? (
-                    <span className={ui.dialogFieldHint}>
-                      {repository.ciGate.diagnostic}
-                    </span>
-                  ) : null}
-                  {repository.ciGate.observedAt !== null ? (
-                    <span className={ui.dialogFieldHint}>
-                      Observed {repository.ciGate.observedAt}
-                      {repository.ciGate.defaultBranch !== null
-                        ? ` on ${repository.ciGate.defaultBranch}`
-                        : ""}
-                    </span>
-                  ) : null}
-                  {repository.ciGate.definitions.map((definition) => (
-                    <span
-                      key={definition.identity}
-                      className={ui.dialogFieldHint}
-                    >
-                      {definition.displayLabel}
-                      {definition.latestRun?.rawConclusion !== null &&
-                      definition.latestRun?.rawConclusion !== undefined
-                        ? ` · ${definition.latestRun.rawConclusion}`
-                        : definition.diagnostic !== null
-                          ? ` · ${definition.diagnostic}`
-                          : ""}
-                      {definition.latestRun?.htmlUrl !== null &&
-                      definition.latestRun?.htmlUrl !== undefined ? (
-                        <>
-                          {" "}
-                          <a
-                            href={definition.latestRun.htmlUrl}
-                            rel="noreferrer"
-                            target="_blank"
-                          >
-                            View run
-                          </a>
-                        </>
-                      ) : null}
-                    </span>
-                  ))}
-                  {repository.ciGate.activeIncident !== null ? (
-                    <span className={ui.dialogFieldHint}>
-                      Active incident:{" "}
-                      {repository.ciGate.activeIncident.summary}
-                    </span>
-                  ) : null}
-                  {repository.ciGate.latestResolvedIncident !== null ? (
-                    <span className={ui.dialogFieldHint}>
-                      Last resolved:{" "}
-                      {repository.ciGate.latestResolvedIncident.summary}
-                    </span>
-                  ) : null}
+                  <RepositoryCiGateCardDetails ciGate={repository.ciGate} />
                 </dd>
               </div>
             </dl>
@@ -3159,18 +3530,27 @@ function RepositoryIssues({
     )
   }
 
-  const childrenByParent = new Map<number, RepositoryIssue[]>()
+  const childrenByParent = new Map<string, RepositoryIssue[]>()
   for (const issue of issues) {
     if (issue.parent === null) continue
-    const children = childrenByParent.get(issue.parent.issueNumber) ?? []
+    const parentKey = issue.parent.nativeId
+    const children = childrenByParent.get(parentKey) ?? []
     children.push(issue)
-    childrenByParent.set(issue.parent.issueNumber, children)
+    childrenByParent.set(parentKey, children)
   }
+  const localIssueNativeIds = new Set(issues.map((issue) => issue.nativeId))
 
   return (
     <ul className={ui.repoIssuesList}>
       {issues.map((issue) => {
-        if (issue.parent !== null) return null
+        // A mapped Linear leaf can name a parent outside this project; show
+        // it as a top-level row when that parent is not in the local list.
+        if (
+          issue.parent !== null &&
+          localIssueNativeIds.has(issue.parent.nativeId)
+        ) {
+          return null
+        }
         if (!issue.hasChildren) {
           return (
             <RepositoryIssueRow
@@ -3184,7 +3564,7 @@ function RepositoryIssues({
           )
         }
 
-        const children = childrenByParent.get(issue.issueNumber) ?? []
+        const children = childrenByParent.get(issue.nativeId) ?? []
         const closedChildren = children.filter(
           (child) => child.state === "CLOSED",
         ).length
@@ -3225,11 +3605,13 @@ function ParentIssueGroup({
   const queryClient = useQueryClient()
   const [implementWithOpen, setImplementWithOpen] = useState(false)
   const openChildren = childIssues.filter((child) => child.state === "OPEN")
-  const canImplementAll = isParentImplementAllWithAutoMergeEligible({
-    openChildren,
-    directChildren: childIssues,
-    workItemsLoading,
-  })
+  const canImplementAll =
+    repository.issueTracker !== "linear" &&
+    isParentImplementAllWithAutoMergeEligible({
+      openChildren,
+      directChildren: childIssues,
+      workItemsLoading,
+    })
   const applyCoveredWorkItems = (covered: readonly WorkItem[]) => {
     const byId = new Map(covered.map((item) => [item.id, item]))
     for (const [queryKey] of queryClient.getQueriesData<readonly WorkItem[]>({
@@ -3267,7 +3649,7 @@ function ParentIssueGroup({
         implementAllWithAutoMerge: {
           __args: {
             repositoryId: parent.repositoryId,
-            issueNumber: parent.issueNumber,
+            nativeId: parent.nativeId,
           },
           ...workItemFields,
         },
@@ -3285,7 +3667,7 @@ function ParentIssueGroup({
         implementWith: {
           __args: {
             repositoryId: parent.repositoryId,
-            issueNumber: parent.issueNumber,
+            nativeId: parent.nativeId,
             profile: input.profile,
             options: input.options,
           },
@@ -3307,7 +3689,9 @@ function ParentIssueGroup({
     <li className="min-w-0">
       <details className={ui.parentIssue} open>
         <summary className={ui.parentIssueSummary}>
-          <span className={ui.repoIssueNum}>#{parent.issueNumber}</span>
+          <span className={ui.repoIssueNum}>
+            {formatIssueDisplayId(parent.displayId)}
+          </span>
           <span className="min-w-0">
             <a
               className={ui.repoIssueTitle}
@@ -3338,7 +3722,7 @@ function ParentIssueGroup({
             </svg>
             {canImplementAll && (
               <ParentIssueActionsMenu
-                parentIssueNumber={parent.issueNumber}
+                displayId={parent.displayId}
                 menuId={parent.id}
                 implementAllPending={implementAll.isPending}
                 implementWithPending={implementWith.isPending}
@@ -3390,7 +3774,7 @@ function ParentIssueGroup({
       </details>
       {implementWithOpen && (
         <ImplementWithIssueDialog
-          issueNumber={parent.issueNumber}
+          displayId={parent.displayId}
           target="parent"
           repositoryId={repository.id}
           initialBackendId={repository.effectiveAgentBackend}
@@ -3440,7 +3824,7 @@ function RepositoryIssueRow({
   const queryClient = useQueryClient()
   const query = workItemsQuery(issue.repositoryId)
   const issueWorkItems = workItems.filter(
-    (workItem) => workItem.issueNumber === issue.issueNumber,
+    (workItem) => workItem.issueSource.nativeId === issue.nativeId,
   )
   const latestWorkItem = issueWorkItems.at(-1)
   const { canImplement, canQueue } = issueActionEligibility({
@@ -3448,6 +3832,8 @@ function RepositoryIssueRow({
     workItems: issueWorkItems,
     workItemsLoading,
   })
+  const canImplementNow = canImplement
+  const canQueueNow = canQueue
   const onImplementSuccess = (workItem: WorkItem) => {
     queryClient.setQueryData<readonly WorkItem[]>(query.queryKey, (current) => [
       ...(current ?? []),
@@ -3460,7 +3846,7 @@ function RepositoryIssueRow({
         implementNow: {
           __args: {
             repositoryId: issue.repositoryId,
-            issueNumber: issue.issueNumber,
+            nativeId: issue.nativeId,
           },
           ...workItemFields,
         },
@@ -3475,7 +3861,7 @@ function RepositoryIssueRow({
         implementCiRepair: {
           __args: {
             repositoryId: issue.repositoryId,
-            issueNumber: issue.issueNumber,
+            nativeId: issue.nativeId,
           },
           ...workItemFields,
         },
@@ -3490,7 +3876,7 @@ function RepositoryIssueRow({
         implementWith: {
           __args: {
             repositoryId: issue.repositoryId,
-            issueNumber: issue.issueNumber,
+            nativeId: issue.nativeId,
             profile: input.profile,
             options: input.options,
           },
@@ -3515,7 +3901,7 @@ function RepositoryIssueRow({
         implementLocally: {
           __args: {
             repositoryId: issue.repositoryId,
-            issueNumber: issue.issueNumber,
+            nativeId: issue.nativeId,
           },
           ...workItemFields,
         },
@@ -3530,7 +3916,7 @@ function RepositoryIssueRow({
         queue: {
           __args: {
             repositoryId: issue.repositoryId,
-            issueNumber: issue.issueNumber,
+            nativeId: issue.nativeId,
           },
           ...workItemFields,
         },
@@ -3546,7 +3932,7 @@ function RepositoryIssueRow({
     implementLocally.isPending ||
     queueIssue.isPending
   const canImplementCiRepair =
-    canImplement &&
+    canImplementNow &&
     repository.ciGate.status === "CLOSED" &&
     repository.ciGate.activeIncident !== null
   const startImplementNow = () => {
@@ -3589,7 +3975,9 @@ function RepositoryIssueRow({
   return (
     <li className={ui.repoIssue}>
       <div className={ui.repoIssueRow}>
-        <span className={ui.repoIssueNum}>#{issue.issueNumber}</span>
+        <span className={ui.repoIssueNum}>
+          {formatIssueDisplayId(issue.displayId)}
+        </span>
         {/*
           Flow container (div, not span): title column holds block companions
           (lifecycle, Banner, blocked-by <p>) under the title when the number
@@ -3600,11 +3988,11 @@ function RepositoryIssueRow({
             <a className={ui.repoIssueTitleInline} href={issue.url}>
               {issue.title}
             </a>
-            {canImplement && (
+            {canImplementNow && (
               <button
                 type="button"
                 className={ui.repoIssueImplementBtn}
-                aria-label={`Implement issue #${issue.issueNumber}`}
+                aria-label={`Implement issue ${formatIssueDisplayId(issue.displayId)}`}
                 disabled={implementPending}
                 onClick={startImplementNow}
               >
@@ -3680,7 +4068,9 @@ function RepositoryIssueRow({
               {issue.blockedBy.map((blocker, index) => (
                 <span key={blocker.issueUrl}>
                   {index > 0 && ", "}
-                  <a href={blocker.issueUrl}>#{blocker.issueNumber}</a>
+                  <a href={blocker.issueUrl}>
+                    {formatIssueDisplayId(blocker.displayId)}
+                  </a>
                 </span>
               ))}
             </p>
@@ -3694,11 +4084,11 @@ function RepositoryIssueRow({
             <span className={cx(ui.stamp, ui.stampBlocked)}>Blocked</span>
           )}
           <IssueActionsMenu
-            issueNumber={issue.issueNumber}
+            displayId={issue.displayId}
             issueId={issue.id}
-            canImplement={canImplement}
+            canImplement={canImplementNow}
             canImplementCiRepair={canImplementCiRepair}
-            canQueue={canQueue}
+            canQueue={canQueueNow}
             implementPending={implementPending}
             implementNowPending={implementNow.isPending}
             implementCiRepairPending={implementCiRepair.isPending}
@@ -3714,7 +4104,7 @@ function RepositoryIssueRow({
       </div>
       {implementWithOpen && (
         <ImplementWithIssueDialog
-          issueNumber={issue.issueNumber}
+          displayId={issue.displayId}
           repositoryId={repository.id}
           initialBackendId={repository.effectiveAgentBackend}
           repositoryPrefs={{

@@ -18,6 +18,7 @@ import {
   stubAzureDevOpsServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
+  stubLinearServiceLayer,
 } from "../src/index.js"
 import { describe, expect, it } from "bun:test"
 
@@ -124,6 +125,7 @@ const lifecycleLayer = (steps: LifecycleStepsShape) =>
     Layer.provideMerge(stubGitHubServiceLayer()),
     Layer.provideMerge(stubGitLabServiceLayer()),
     Layer.provideMerge(stubAzureDevOpsServiceLayer()),
+    Layer.provideMerge(stubLinearServiceLayer()),
     Layer.provideMerge(Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps))),
     Layer.provideMerge(DbServiceLive),
     Layer.provideMerge(SqliteQueueServiceLive),
@@ -233,7 +235,7 @@ describe("Commit late No-Change lifecycle routes", () => {
             title: "Late no-change",
           })
 
-          const created = yield* lifecycle.implementNow(repository.id, 1204)
+          const created = yield* lifecycle.implementNow(repository.id, "1204")
           yield* runThroughReview
 
           const afterCommit = yield* claimAndRun
@@ -324,7 +326,10 @@ describe("Commit late No-Change lifecycle routes", () => {
             title: "Local late no-change",
           })
 
-          const created = yield* lifecycle.implementLocally(repository.id, 1205)
+          const created = yield* lifecycle.implementLocally(
+            repository.id,
+            "1205",
+          )
           expect(created.pauseBeforeStep).toBe("commit")
 
           const afterReview = yield* runThroughReview
@@ -417,7 +422,7 @@ describe("Commit late No-Change lifecycle routes", () => {
             title: "Late CHANGES",
           })
 
-          yield* lifecycle.implementNow(repository.id, 1206)
+          yield* lifecycle.implementNow(repository.id, "1206")
           yield* runThroughReview
           const failed = yield* claimAndRun
           expect(failed._tag).toBe("processed")
@@ -472,7 +477,7 @@ describe("Commit late No-Change lifecycle routes", () => {
             title: "Malformed late confirm",
           })
 
-          yield* lifecycle.implementNow(repository.id, 1207)
+          yield* lifecycle.implementNow(repository.id, "1207")
           yield* runThroughReview
           const failed = yield* claimAndRun
           expect(failed._tag).toBe("processed")
@@ -530,7 +535,7 @@ describe("Commit late No-Change lifecycle routes", () => {
             title: "Retry late no-change",
           })
 
-          yield* lifecycle.implementNow(repository.id, 1208)
+          yield* lifecycle.implementNow(repository.id, "1208")
           yield* runThroughReview
           const failed = yield* claimAndRun
           expect(failed._tag).toBe("processed")
@@ -627,7 +632,7 @@ describe("Commit late No-Change lifecycle routes", () => {
 
           const created = yield* lifecycle.implementNow(
             repository.id,
-            issueNumber,
+            String(issueNumber),
           )
           yield* runThroughReview
 
@@ -700,7 +705,7 @@ describe("Commit late No-Change lifecycle routes", () => {
 
           const created = yield* lifecycle.implementNow(
             repository.id,
-            issueNumber,
+            String(issueNumber),
           )
           yield* runThroughReview
           const failed = yield* claimAndRun

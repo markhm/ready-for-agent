@@ -6,6 +6,7 @@ import {
   type ActiveAgentBackend,
   AgentBackend,
   agentBackendLabel,
+  spawnOwned,
 } from "@ready-for-agent/agent-backend"
 import {
   AZURE_DEVOPS_PAT_ENV_VAR,
@@ -55,7 +56,12 @@ import {
   toForgeRepository,
 } from "./forge-mutation.js"
 import { forgeObservation } from "./forge-observation.js"
+import { issueOperationsForge } from "./issue-source-execution.js"
 import type { LifecycleStepContext } from "./lifecycle-steps.js"
+import {
+  githubPullRequestUrl,
+  notifyLinearPullRequest,
+} from "./linear-milestones.js"
 import {
   type PublicationCopy,
   buildCreatePrFallbackPromptWithCopy,
@@ -66,6 +72,7 @@ import { repairFallback } from "./repair-fallback.js"
 import {
   SANITIZED_REPOSITORY_SHELL_PREFIX,
   repositoryProcessOptions,
+  runOwnedWithSecrets,
 } from "./repository-process-environment.js"
 import {
   DEFAULT_LIFECYCLE_MAX_DURATIONS,
@@ -166,7 +173,7 @@ const runGitInWorktree = (cwd: string, args: ReadonlyArray<string>) =>
 
     return yield* Effect.scoped(
       Effect.gen(function* () {
-        const handle = yield* spawner.spawn(command)
+        const handle = yield* spawnOwned(spawner, command)
         const [exitCode, stdout, stderr] = yield* Effect.all(
           [
             handle.exitCode,
@@ -424,22 +431,20 @@ const attemptAzureDevOpsHttpsPush = (
         shellQuote(refspec),
       ].join(" ")
 
-      const result = yield* keymaxxer
-        .runWithSecrets({
-          command,
-          cwd: worktreePath,
-          secrets: [tokenName],
-          timeoutMs: NATIVE_PUSH_TIMEOUT_MS,
-        })
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.succeed({
-              exitCode: 1,
-              stdout: "",
-              stderr: `Keymaxxer runWithSecrets failed: ${errorMessage(cause)}`,
-            }),
-          ),
-        )
+      const result = yield* runOwnedWithSecrets(keymaxxer, {
+        command,
+        cwd: worktreePath,
+        secrets: [tokenName],
+        timeoutMs: NATIVE_PUSH_TIMEOUT_MS,
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.succeed({
+            exitCode: 1,
+            stdout: "",
+            stderr: `Keymaxxer runWithSecrets failed: ${errorMessage(cause)}`,
+          }),
+        ),
+      )
 
       if (result.exitCode !== 0) {
         const output = [result.stdout, result.stderr]
@@ -563,22 +568,20 @@ const attemptNativePush = (
       shellQuote(branch),
     ].join(" ")
 
-    const result = yield* keymaxxer
-      .runWithSecrets({
-        command,
-        cwd: worktreePath,
-        secrets: [tokenName],
-        timeoutMs: NATIVE_PUSH_TIMEOUT_MS,
-      })
-      .pipe(
-        Effect.catch((cause) =>
-          Effect.succeed({
-            exitCode: 1,
-            stdout: "",
-            stderr: `Keymaxxer runWithSecrets failed: ${errorMessage(cause)}`,
-          }),
-        ),
-      )
+    const result = yield* runOwnedWithSecrets(keymaxxer, {
+      command,
+      cwd: worktreePath,
+      secrets: [tokenName],
+      timeoutMs: NATIVE_PUSH_TIMEOUT_MS,
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.succeed({
+          exitCode: 1,
+          stdout: "",
+          stderr: `Keymaxxer runWithSecrets failed: ${errorMessage(cause)}`,
+        }),
+      ),
+    )
 
     if (result.exitCode !== 0) {
       const output = [result.stdout, result.stderr]
@@ -631,22 +634,20 @@ const attemptGitLabHttpsPush = (
         shellQuote(refspec),
       ].join(" ")
 
-      const result = yield* keymaxxer
-        .runWithSecrets({
-          command,
-          cwd: worktreePath,
-          secrets: [tokenName],
-          timeoutMs: NATIVE_PUSH_TIMEOUT_MS,
-        })
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.succeed({
-              exitCode: 1,
-              stdout: "",
-              stderr: `Keymaxxer runWithSecrets failed: ${errorMessage(cause)}`,
-            }),
-          ),
-        )
+      const result = yield* runOwnedWithSecrets(keymaxxer, {
+        command,
+        cwd: worktreePath,
+        secrets: [tokenName],
+        timeoutMs: NATIVE_PUSH_TIMEOUT_MS,
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.succeed({
+            exitCode: 1,
+            stdout: "",
+            stderr: `Keymaxxer runWithSecrets failed: ${errorMessage(cause)}`,
+          }),
+        ),
+      )
 
       if (result.exitCode !== 0) {
         const output = [result.stdout, result.stderr]
@@ -807,6 +808,7 @@ const resolvePublicationCopyForCreatePr = (
       const normalized = normalizePublicationCopy(
         { title, body },
         context.issueNumber,
+        context.issueSource,
       )
       if (normalized !== null) {
         return normalized
@@ -824,6 +826,7 @@ const resolvePublicationCopyForCreatePr = (
       const seeded = publicationCopyFromCommitMessage(
         head.stdout,
         context.issueNumber,
+        context.issueSource,
       )
       if (seeded !== null) {
         yield* softPersistPublicationCopy(context.workItemId, seeded)
@@ -1087,21 +1090,39 @@ export const createPr = (context: LifecycleStepContext) =>
     })
 
     const mutations = yield* forgePullRequestMutations(repository)
-    yield* associateNativePullRequestWithIssue({
-      mutations,
-      repository: toForgeRepository(repository),
-      pullRequestNumber: outcome.value,
-      issueNumber: context.issueNumber,
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new CreatePrPostconditionError({
-            repositoryId: context.repositoryId,
-            message: `Failed to associate Azure Boards Issue #${context.issueNumber} with pull request ${outcome.value}`,
-            diagnostics: boundDiagnostics(errorMessage(cause)),
-          }),
-      ),
+    const issueForge = issueOperationsForge(
+      context.issueSource,
+      repository.forge,
     )
+    if (issueForge === "azure-devops") {
+      yield* associateNativePullRequestWithIssue({
+        mutations,
+        repository: toForgeRepository(repository),
+        pullRequestNumber: outcome.value,
+        issueNumber: context.issueNumber,
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new CreatePrPostconditionError({
+              repositoryId: context.repositoryId,
+              message: `Failed to associate Azure Boards Issue #${context.issueNumber} with pull request ${outcome.value}`,
+              diagnostics: boundDiagnostics(errorMessage(cause)),
+            }),
+        ),
+      )
+    }
+
+    if (repository.forge === "github") {
+      yield* notifyLinearPullRequest({
+        issueSource: context.issueSource,
+        workItemId: context.workItemId,
+        pullRequestUrl: githubPullRequestUrl({
+          forgeHost: repository.forgeHost,
+          projectPath: repository.projectPath,
+          pullRequestNumber: outcome.value,
+        }),
+      })
+    }
 
     return toCreatePrResult(outcome.value, outcome.completion, copy)
   })

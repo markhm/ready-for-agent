@@ -45,6 +45,9 @@ export class InvalidIssueInputError extends Schema.TaggedErrorClass<InvalidIssue
   {
     field: Schema.Literals([
       "issueNumber",
+      "issueTracker",
+      "nativeId",
+      "displayId",
       "title",
       "url",
       "state",
@@ -113,6 +116,9 @@ export class InvalidRepositorySettingsError extends Schema.TaggedErrorClass<Inva
       "reviewThinkingLevel",
       "guaranteedMinConcurrentAgentTurns",
       "selectedCiGateDefinitionIdentities",
+      "issueTracker",
+      "linearProjectId",
+      "linearWorkflowStatuses",
     ]),
     message: Schema.String,
   },

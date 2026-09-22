@@ -21,6 +21,77 @@ describe("toGraphQLError", () => {
     })
   })
 
+  test("maps IssueNotFoundError to ISSUE_NOT_FOUND with Forge #label", () => {
+    const error = {
+      _tag: "IssueNotFoundError" as const,
+      repositoryId: "repo-1",
+      issueNumber: 412,
+      nativeId: "412",
+    }
+
+    const gqlError = toGraphQLError(error)
+
+    expect(gqlError.message).toBe(
+      "Issue #412 was not found in repository repo-1",
+    )
+    expect(gqlError.extensions).toMatchObject({
+      code: "ISSUE_NOT_FOUND",
+    })
+  })
+
+  test("maps IssueNotFoundError to ISSUE_NOT_FOUND with Linear native identity", () => {
+    const error = {
+      _tag: "IssueNotFoundError" as const,
+      repositoryId: "repo-1",
+      issueNumber: 0,
+      nativeId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    }
+
+    const gqlError = toGraphQLError(error)
+
+    expect(gqlError.message).toBe(
+      "Issue a1b2c3d4-e5f6-7890-abcd-ef1234567890 was not found in repository repo-1",
+    )
+    expect(gqlError.extensions).toMatchObject({
+      code: "ISSUE_NOT_FOUND",
+    })
+  })
+
+  test("maps IssueIdentityAmbiguousError to ISSUE_IDENTITY_AMBIGUOUS", () => {
+    const error = {
+      _tag: "IssueIdentityAmbiguousError" as const,
+      repositoryId: "repo-1",
+      issueNumber: 123,
+      message: "Issue #123 matches 2 Issues on the current Issue Tracker.",
+    }
+
+    const gqlError = toGraphQLError(error)
+
+    expect(gqlError.message).toContain("matches 2 Issues")
+    expect(gqlError.extensions).toMatchObject({
+      code: "ISSUE_IDENTITY_AMBIGUOUS",
+      repositoryId: "repo-1",
+      issueNumber: 123,
+    })
+  })
+
+  test("maps LinearExecutionNotSupportedError to LINEAR_EXECUTION_NOT_SUPPORTED", () => {
+    const error = {
+      _tag: "LinearExecutionNotSupportedError" as const,
+      repositoryId: "repo-1",
+      message:
+        "Linear Issue execution is not available yet. Discovery and settings work; implementation lands in a follow-up.",
+    }
+
+    const gqlError = toGraphQLError(error)
+
+    expect(gqlError.message).toContain("not available yet")
+    expect(gqlError.extensions).toMatchObject({
+      code: "LINEAR_EXECUTION_NOT_SUPPORTED",
+      repositoryId: "repo-1",
+    })
+  })
+
   test("maps InvalidExecutionProfileError to INVALID_EXECUTION_PROFILE", () => {
     const error = {
       _tag: "InvalidExecutionProfileError" as const,
@@ -110,15 +181,17 @@ describe("toGraphQLError", () => {
     const error = {
       _tag: "NoUnfinishedWorkItemError" as const,
       repositoryId: "repo-1",
-      issueNumber: 9,
+      nativeId: "9",
     }
 
     const gqlError = toGraphQLError(error)
 
-    expect(gqlError.message).toContain("#9")
+    expect(gqlError.message).toBe(
+      "Issue #9 has no unfinished Work Item in repository repo-1",
+    )
     expect(gqlError.extensions).toMatchObject({
       code: "NO_UNFINISHED_WORK_ITEM",
-      issueNumber: 9,
+      nativeId: "9",
     })
   })
 

@@ -29,29 +29,46 @@ const childIssueCategory = (issue: IssueRecord): number => {
   return issue.blockedBy.length === 0 ? 0 : 1
 }
 
+const issueIdentityKey = (issue: { readonly nativeId: string }): string =>
+  issue.nativeId
+
+const issueDisplayKey = (issue: { readonly displayId: string }): string =>
+  issue.displayId
+
 const compareChildIssues = (left: IssueRecord, right: IssueRecord): number =>
   childIssueCategory(left) - childIssueCategory(right) ||
   (left.parentPosition ?? Number.MAX_SAFE_INTEGER) -
     (right.parentPosition ?? Number.MAX_SAFE_INTEGER) ||
+  issueDisplayKey(left).localeCompare(issueDisplayKey(right), undefined, {
+    numeric: true,
+  }) ||
   left.issueNumber - right.issueNumber
 
 export const workIssueProjection = (
   issues: readonly IssueRecord[],
 ): readonly IssueRecord[] => {
-  const childrenByParent = new Map<number, IssueRecord[]>()
+  const childrenByParent = new Map<string, IssueRecord[]>()
   for (const issue of issues) {
     if (issue.parent === null) continue
-    const children = childrenByParent.get(issue.parent.issueNumber) ?? []
+    const parentKey = issueIdentityKey({
+      nativeId: issue.parent.nativeId,
+    })
+    const children = childrenByParent.get(parentKey) ?? []
     children.push(issue)
-    childrenByParent.set(issue.parent.issueNumber, children)
+    childrenByParent.set(parentKey, children)
   }
 
   return issues
     .filter((issue) => issue.parent === null)
-    .sort((left, right) => right.issueNumber - left.issueNumber)
+    .sort(
+      (left, right) =>
+        issueDisplayKey(right).localeCompare(issueDisplayKey(left), undefined, {
+          numeric: true,
+        }) || right.issueNumber - left.issueNumber,
+    )
     .flatMap((issue) => {
       if (!issue.hasChildren) return [issue]
-      const children = childrenByParent.get(issue.issueNumber) ?? []
+      const children = childrenByParent.get(issueIdentityKey(issue)) ?? []
       if (children.length === 0) return []
       return [issue, ...children.sort(compareChildIssues)]
     })
@@ -289,7 +306,7 @@ const isRedundantReviewInProgressMessage = (stepRun: StepRunRecord): boolean =>
 export const workItemStatusMessage = (
   workItem: WorkItemRecord,
   options?: {
-    readonly blockerIssueNumbers?: readonly number[]
+    readonly blockerDisplayIds?: readonly string[]
     readonly failedCiGateDefinitionLabels?: readonly string[]
     readonly ciFailureIncidentSummary?: string | null
   },
@@ -298,7 +315,7 @@ export const workItemStatusMessage = (
     return workItem.failureMessage
   }
   if (workItem.waitingForBlockers) {
-    return formatWaitingForBlockersMessage(options?.blockerIssueNumbers ?? [])
+    return formatWaitingForBlockersMessage(options?.blockerDisplayIds ?? [])
   }
   if (workItem.waitingSince != null) {
     return WAITING_FOR_WORKER_SLOT_MESSAGE

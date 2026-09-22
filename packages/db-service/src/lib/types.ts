@@ -1,7 +1,11 @@
 import { Schema } from "effect"
-import { Forge } from "@ready-for-agent/lifecycle-model"
+import {
+  Forge,
+  IssueTracker,
+  defaultIssueTrackerForForge,
+} from "@ready-for-agent/lifecycle-model"
 
-export { Forge }
+export { Forge, IssueTracker, defaultIssueTrackerForForge }
 
 export const RepositoryId = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^repo-[0-9A-HJKMNP-TV-Z]{26}$/)),
@@ -18,9 +22,23 @@ export type IssueState = typeof IssueState.Type
 export const MergePolicy = Schema.Literals(["off", "classify", "always"])
 export type MergePolicy = typeof MergePolicy.Type
 
+export const LinearTeamWorkflowSelection = Schema.Struct({
+  teamId: Schema.String,
+  teamKey: Schema.String,
+  teamName: Schema.String,
+  inProgressStateId: Schema.String,
+  inProgressStateName: Schema.String,
+  doneStateId: Schema.String,
+  doneStateName: Schema.String,
+})
+export type LinearTeamWorkflowSelection =
+  typeof LinearTeamWorkflowSelection.Type
+
 export const IssueReference = Schema.Struct({
   issueNumber: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
   issueUrl: Schema.String,
+  nativeId: Schema.String,
+  displayId: Schema.String,
 })
 export type IssueReference = typeof IssueReference.Type
 
@@ -38,6 +56,7 @@ export type AddRepositoryInput = typeof AddRepositoryInput.Type
 export const RepositoryRecord = Schema.Struct({
   id: RepositoryId,
   forge: Forge,
+  issueTracker: IssueTracker,
   forgeHost: Schema.String,
   projectPath: Schema.String,
   localPath: Schema.String,
@@ -61,6 +80,9 @@ export const RepositoryRecord = Schema.Struct({
   ),
   includeAllIssueAuthors: Schema.Boolean,
   waitForReadyForReviewChecks: Schema.Boolean,
+  linearProjectId: Schema.NullOr(Schema.String),
+  linearProjectName: Schema.NullOr(Schema.String),
+  linearWorkflowStatuses: Schema.Array(LinearTeamWorkflowSelection),
   issuesReconciledAt: Schema.NullOr(Schema.Date),
 })
 export type RepositoryRecord = typeof RepositoryRecord.Type
@@ -201,6 +223,15 @@ export const UpdateRepositorySettingsInput = Schema.Struct({
   includeAllIssueAuthors: Schema.Boolean,
   waitForReadyForReviewChecks: Schema.Boolean,
   /**
+   * Configured Issue Tracker. Omitted leaves the stored tracker unchanged.
+   */
+  issueTracker: Schema.optionalKey(IssueTracker),
+  linearProjectId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  linearProjectName: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  linearWorkflowStatuses: Schema.optionalKey(
+    Schema.Array(LinearTeamWorkflowSelection),
+  ),
+  /**
    * Selected CI Gate Definitions. Omitted leaves stored selections unchanged.
    * Empty array clears every selection and disables the Repository CI Gate.
    */
@@ -260,6 +291,9 @@ export type UpdateConfigInput = typeof UpdateConfigInput.Type
 export const StoreIssueInput = Schema.Struct({
   repositoryId: Schema.String,
   issueNumber: Schema.Finite,
+  issueTracker: Schema.optionalKey(IssueTracker),
+  nativeId: Schema.optionalKey(Schema.String),
+  displayId: Schema.optionalKey(Schema.String),
   title: Schema.String,
   body: Schema.String,
   url: Schema.String,
@@ -277,6 +311,9 @@ export const IssueRecord = Schema.Struct({
   id: Schema.String,
   repositoryId: RepositoryId,
   issueNumber: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
+  issueTracker: Schema.optionalKey(IssueTracker),
+  nativeId: Schema.String,
+  displayId: Schema.String,
   title: Schema.String,
   body: Schema.String,
   url: Schema.String,
@@ -308,6 +345,7 @@ export type UnfinishedCreatePrWorkItem = typeof UnfinishedCreatePrWorkItem.Type
 export const RepositorySqlRow = Schema.Struct({
   id: RepositoryId,
   forge: Forge,
+  issueTracker: IssueTracker,
   forgeHost: Schema.String,
   projectPath: Schema.String,
   localPath: Schema.String,
@@ -323,10 +361,14 @@ export const RepositorySqlRow = Schema.Struct({
   guaranteedMinConcurrentAgentTurns: Schema.NullOr(Schema.Int),
   includeAllIssueAuthors: SqlBoolean,
   waitForReadyForReviewChecks: SqlBoolean,
+  linearProjectId: Schema.NullOr(Schema.String),
+  linearProjectName: Schema.NullOr(Schema.String),
+  linearWorkflowStatuses: Schema.String,
   issuesReconciledAt: Schema.NullOr(Schema.DateFromMillis),
 }).pipe(
   Schema.encodeKeys({
     forge: "forge",
+    issueTracker: "issue_tracker",
     forgeHost: "forge_host",
     projectPath: "project_path",
     localPath: "local_path",
@@ -341,6 +383,9 @@ export const RepositorySqlRow = Schema.Struct({
     guaranteedMinConcurrentAgentTurns: "guaranteed_min_concurrent_agent_turns",
     includeAllIssueAuthors: "include_all_issue_authors",
     waitForReadyForReviewChecks: "wait_for_ready_for_review_checks",
+    linearProjectId: "linear_project_id",
+    linearProjectName: "linear_project_name",
+    linearWorkflowStatuses: "linear_workflow_statuses",
     issuesReconciledAt: "issues_reconciled_at",
   }),
 )
@@ -504,11 +549,15 @@ export type RepositorySettingsConfigSqlRow =
 
 export const RepositorySettingsSqlRow = Schema.Struct({
   forge: Forge,
+  issueTracker: IssueTracker,
   forgeHost: Schema.String,
   projectPath: Schema.String,
   selectedAgentBackend: Schema.NullOr(Schema.String),
   backendModelPrefs: Schema.String,
   guaranteedMinConcurrentAgentTurns: Schema.NullOr(Schema.Int),
+  linearProjectId: Schema.NullOr(Schema.String),
+  linearProjectName: Schema.NullOr(Schema.String),
+  linearWorkflowStatuses: Schema.String,
 })
 export type RepositorySettingsSqlRow = typeof RepositorySettingsSqlRow.Type
 
@@ -516,6 +565,9 @@ export const IssueSqlRow = Schema.Struct({
   id: Schema.String,
   repositoryId: RepositoryId,
   issueNumber: Schema.Int,
+  issueTracker: IssueTracker,
+  nativeId: Schema.String,
+  displayId: Schema.String,
   title: Schema.String,
   body: Schema.String,
   url: Schema.String,
@@ -524,16 +576,23 @@ export const IssueSqlRow = Schema.Struct({
   issueAuthor: Schema.NullOr(Schema.String),
   parentIssueNumber: Schema.NullOr(Schema.Int),
   parentIssueUrl: Schema.NullOr(Schema.String),
+  parentNativeId: Schema.NullOr(Schema.String),
+  parentDisplayId: Schema.NullOr(Schema.String),
   parentPosition: Schema.NullOr(Schema.Int),
   hasChildren: SqlBoolean,
 }).pipe(
   Schema.encodeKeys({
     repositoryId: "repository_id",
     issueNumber: "issue_number",
+    issueTracker: "issue_tracker",
+    nativeId: "issue_native_id",
+    displayId: "issue_display_id",
     githubCreatedAt: "github_created_at",
     issueAuthor: "issue_author",
     parentIssueNumber: "parent_issue_number",
     parentIssueUrl: "parent_issue_url",
+    parentNativeId: "parent_native_id",
+    parentDisplayId: "parent_display_id",
     parentPosition: "parent_position",
     hasChildren: "has_children",
   }),
@@ -544,11 +603,15 @@ export const IssueDependencySqlRow = Schema.Struct({
   issueId: Schema.String,
   issueNumber: Schema.Int,
   issueUrl: Schema.String,
+  nativeId: Schema.String,
+  displayId: Schema.String,
 }).pipe(
   Schema.encodeKeys({
     issueId: "issue_id",
     issueNumber: "blocking_issue_number",
     issueUrl: "blocking_issue_url",
+    nativeId: "blocking_native_id",
+    displayId: "blocking_display_id",
   }),
 )
 export type IssueDependencySqlRow = typeof IssueDependencySqlRow.Type

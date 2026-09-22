@@ -14,6 +14,7 @@ import {
   stubAzureDevOpsServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
+  stubLinearServiceLayer,
 } from "../src/index.js"
 import { describe, expect, it } from "bun:test"
 
@@ -66,6 +67,7 @@ const TestLayer = WorkItemLifecycleLive.pipe(
   Layer.provideMerge(stubGitHubServiceLayer()),
   Layer.provideMerge(stubGitLabServiceLayer()),
   Layer.provideMerge(stubAzureDevOpsServiceLayer()),
+  Layer.provideMerge(stubLinearServiceLayer()),
   Layer.provideMerge(
     Layer.succeed(LifecycleSteps, LifecycleSteps.of(successfulSteps)),
   ),
@@ -103,16 +105,20 @@ const seedWorkItem = (input: {
     const sql = yield* SqlClient.SqlClient
     yield* sql.unsafe(
       `INSERT INTO work_item (
-         id, repository_id, issue_number, issue_title, pull_request_number,
+         id, repository_id, issue_number, issue_tracker, issue_native_id,
+         issue_display_id, issue_url, issue_title, pull_request_number,
          agent_backend, state, state_ready_at,
          worktree_path, session_id, failure_code, failure_message,
          created_at, updated_at
-       ) VALUES (?, ?, ?, ?, NULL, ?, 'implement', ?,
+       ) VALUES (?, ?, ?, 'github', ?, ?, ?, ?, NULL, ?, 'implement', ?,
          ?, ?, NULL, NULL, ?, ?)`,
       [
         input.workItemId,
         input.repositoryId,
         input.issueNumber,
+        String(input.issueNumber),
+        String(input.issueNumber),
+        `https://github.com/acme/widgets/issues/${input.issueNumber}`,
         `Issue ${input.issueNumber}`,
         input.agentBackend ?? "opencode",
         input.now,
