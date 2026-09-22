@@ -5,6 +5,7 @@ import { Duration, Effect, Layer, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { FpRequestError } from "./errors.js"
 import {
+  type FpComment,
   type FpListIssue,
   type FpShowIssue,
   classifyFpFailure,
@@ -119,8 +120,32 @@ const withBodyFile = <A, E>(
       ).pipe(Effect.ignore),
   )
 
-/** fp drops a trailing newline from stored comment content. */
-const storedContent = (text: string): string => text.replace(/\n+$/, "")
+/**
+ * fp stores comment content trimmed at both ends (0.25.0: `content.trim()`
+ * on add and update), inner whitespace kept; compare what fp would store.
+ */
+const storedContent = (text: string): string => text.trim()
+
+const escapeRegExp = (text: string): string =>
+  text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+/**
+ * The comment that carries `marker` as a line of its own. A comment that
+ * merely quotes the marker (`> ready-for-agent:...`) is someone else's and
+ * is never the target. `fp comment list` prints newest first; when more
+ * than one comment carries the marker, the oldest is the one the harness
+ * wrote first and the one it keeps updating.
+ */
+const findMarked = (
+  comments: readonly FpComment[],
+  marker: string,
+): FpComment | null => {
+  const ownLine = new RegExp(`^${escapeRegExp(marker)}$`, "m")
+  return (
+    [...comments].reverse().find((comment) => ownLine.test(comment.content)) ??
+    null
+  )
+}
 
 /**
  * Every operation spawns the fp CLI with the project directory as working
@@ -619,10 +644,7 @@ export const makeFpService = (
       }
       const cwd = projectOptions.projectDirectory
       const wanted = storedContent(body)
-      const findMarked = (
-        comments: readonly { id: string; content: string }[],
-      ) => comments.find((comment) => comment.content.includes(marker)) ?? null
-      const existing = findMarked(yield* listComments(cwd, issueId))
+      const existing = findMarked(yield* listComments(cwd, issueId), marker)
       if (existing !== null && storedContent(existing.content) === wanted) {
         return
       }
@@ -639,7 +661,7 @@ export const makeFpService = (
               `updating milestone comment ${existing.id} on fp issue ${issueId}`,
             ),
       )
-      const written = findMarked(yield* listComments(cwd, issueId))
+      const written = findMarked(yield* listComments(cwd, issueId), marker)
       if (written === null || storedContent(written.content) !== wanted) {
         return yield* requestError(
           `fp reported the milestone comment on Issue ${issueId} as written, but reading back found ${written === null ? "no comment with its marker" : "different content"}.`,

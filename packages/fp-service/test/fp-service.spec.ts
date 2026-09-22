@@ -1,12 +1,20 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { BunServices } from "@effect/platform-bun"
 import { Duration, Effect, Result } from "effect"
 import { ChildProcessSpawner } from "effect/unstable/process"
 import { FpRequestError } from "../src/lib/errors.js"
 import type { FpServiceShape } from "../src/lib/fp-service.js"
 import { makeFpService } from "../src/lib/fp-service-live.js"
+import { fpMilestoneMarker } from "../src/lib/types.js"
 import {
   afterAll,
   beforeAll,
@@ -160,7 +168,7 @@ const marker = (name: string) => writeFile(join(fixturesDirectory, name), "")
  * The fake's writes: JSON editing the shell script delegates to Bun. Status
  * writes rewrite both `show-*.json` copies; comments live in
  * `comments-<nativeId>.json`, newest first as `fp comment list` prints them.
- * A trailing newline in a body file is dropped, as fp 0.25.0 does.
+ * A body file's content is stored trimmed, as fp 0.25.0 does.
  */
 const MUTATE_SCRIPT = `
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
@@ -168,7 +176,7 @@ import { join } from "node:path"
 const [op, fixtures, target, value] = process.argv.slice(2)
 const showFile = (id) => join(fixtures, \`show-\${id}.json\`)
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"))
-const body = (file) => readFileSync(file, "utf8").replace(/\\n$/, "")
+const body = (file) => readFileSync(file, "utf8").trim()
 const commentsFile = (issueId) => join(fixtures, \`comments-\${issueId}.json\`)
 const comments = (issueId) =>
   existsSync(commentsFile(issueId)) ? readJson(commentsFile(issueId)) : { comments: [] }
@@ -236,6 +244,7 @@ if [ "$1" = "comment" ]; then
     exit 0
   fi
   if [ "$2" = "update" ]; then
+    if [ -f "${fixtures}/stale-comment" ]; then printf '%s\\n' "Comment $3 not found" "  Suggestion: Run 'fp comment list <issue-id>' to see available comments"; exit 1; fi
     if [ ! -f "${fixtures}/silent" ]; then
       "${bun}" "${mutate}" update "${fixtures}" "$3" "$5"
       if [ $? -eq 3 ]; then printf '%s\\n' "Comment $3 not found" "  Suggestion: Run 'fp comment list <issue-id>' to see available comments"; exit 1; fi
@@ -850,7 +859,8 @@ describe("FpService.checkReadiness", () => {
   })
 })
 
-const writeCalls = async (): Promise<readonly string[]> =>
+/** Every status write and every comment command, reads included. */
+const trackedCalls = async (): Promise<readonly string[]> =>
   (await calls()).filter(
     (line) => line.startsWith("issue update ") || line.startsWith("comment "),
   )
@@ -866,7 +876,7 @@ describe("FpService.updateIssueStatus", () => {
       withService((service) => service.getIssue(project, CHILD_B)),
     )
     expect(after.status).toBe("in-progress")
-    expect(await writeCalls()).toEqual([
+    expect(await trackedCalls()).toEqual([
       `issue update ${CHILD_B} --status in-progress`,
     ])
   })
@@ -877,7 +887,7 @@ describe("FpService.updateIssueStatus", () => {
         service.updateIssueStatus(project, SELECTED_G, "selected"),
       ),
     )
-    expect(await writeCalls()).toEqual([])
+    expect(await trackedCalls()).toEqual([])
   })
 
   test("accepts a closed Issue without reopening or re-transitioning it", async () => {
@@ -886,7 +896,7 @@ describe("FpService.updateIssueStatus", () => {
         service.updateIssueStatus(project, DONE_D, "in-progress"),
       ),
     )
-    expect(await writeCalls()).toEqual([])
+    expect(await trackedCalls()).toEqual([])
     const after = await run(
       withService((service) => service.getIssue(project, DONE_D)),
     )
@@ -903,7 +913,7 @@ describe("FpService.updateIssueStatus", () => {
         ),
       ),
     )
-    expect(await writeCalls()).toEqual([])
+    expect(await trackedCalls()).toEqual([])
   })
 
   test("reports a status the project does not register as invalid_status", async () => {
@@ -924,7 +934,7 @@ describe("FpService.updateIssueStatus", () => {
       ),
     )
     expect(error.kind).toBe("issue_not_found")
-    expect(await writeCalls()).toEqual([])
+    expect(await trackedCalls()).toEqual([])
   })
 
   test("fails as write_not_applied when fp reports success but the status did not move", async () => {
@@ -939,8 +949,28 @@ describe("FpService.updateIssueStatus", () => {
   })
 })
 
-const MARKER = "ready-for-agent:work-started:wi-123"
+const MARKER = fpMilestoneMarker("work-started", "wi-123")
 const BODY = `- Work started by ready-for-agent on Child B.\nSecond line with \`code\`.\n\n${MARKER}\n`
+
+/** Put a comment on the fake's store directly, as a person or another tool would. */
+const addForeignComment = async (issueId: string, content: string) => {
+  const file = join(fixturesDirectory, `comments-${issueId}.json`)
+  const stored = JSON.parse(await readFile(file, "utf8")) as {
+    comments: { id: string; content: string }[]
+  }
+  stored.comments.unshift({ id: `foreign-${stored.comments.length}`, content })
+  await writeFile(file, JSON.stringify(stored))
+}
+
+const storedComments = async (issueId: string) =>
+  (
+    JSON.parse(
+      await readFile(
+        join(fixturesDirectory, `comments-${issueId}.json`),
+        "utf8",
+      ),
+    ) as { comments: { id: string; content: string }[] }
+  ).comments
 
 /** Ensure the standard marked comment, then return what the fake stored. */
 const markedComments = async (issueId: string) => {
@@ -959,10 +989,10 @@ describe("FpService.ensureMilestoneComment", () => {
   test("creates the comment when no comment carries the marker, through a body file", async () => {
     const comments = await markedComments(CHILD_B)
     expect(comments).toHaveLength(1)
-    // fp stores the body without its trailing newline; the dash-led first
-    // line survives because the body travelled as a file, not an argument.
-    expect(comments[0]?.content).toBe(BODY.trimEnd())
-    const writes = await writeCalls()
+    // fp stores the body trimmed; the dash-led first line survives because
+    // the body travelled as a file, not an argument.
+    expect(comments[0]?.content).toBe(BODY.trim())
+    const writes = await trackedCalls()
     expect(writes).toHaveLength(3)
     expect(writes[0]).toBe(`comment list ${CHILD_B} --format json`)
     expect(writes[1]).toMatch(
@@ -979,7 +1009,7 @@ describe("FpService.ensureMilestoneComment", () => {
         service.ensureMilestoneComment(project, CHILD_B, MARKER, BODY),
       ),
     )
-    expect(await writeCalls()).toEqual([
+    expect(await trackedCalls()).toEqual([
       `comment list ${CHILD_B} --format json`,
     ])
   })
@@ -1014,7 +1044,7 @@ describe("FpService.ensureMilestoneComment", () => {
     expect(
       stored.comments.find((comment) => comment.content.includes(MARKER)),
     ).toMatchObject({ id: "comment-1", content: revised })
-    const writes = await writeCalls()
+    const writes = await trackedCalls()
     expect(writes[1]).toMatch(/^comment update comment-1 --file /)
   })
 
@@ -1031,7 +1061,7 @@ describe("FpService.ensureMilestoneComment", () => {
       ),
     )
     expect(noBody.message).toContain("was empty")
-    expect(await writeCalls()).toEqual([])
+    expect(await trackedCalls()).toEqual([])
   })
 
   test("reports an Issue that does not exist as issue_not_found", async () => {
@@ -1071,13 +1101,99 @@ describe("FpService.ensureMilestoneComment", () => {
     expect(error.message).toContain("different content")
   })
 
-  test("removes the temporary body file after fp has read it", async () => {
+  test("removes the temporary body file and its directory after fp has read it", async () => {
     await markedComments(CHILD_B)
-    const addCall = (await writeCalls()).find((line) =>
+    const addCall = (await trackedCalls()).find((line) =>
       line.startsWith("comment add "),
     )
     const path = addCall?.split(" --file ")[1]
     expect(path).toBeDefined()
-    await expect(readFile(path as string, "utf8")).rejects.toThrow()
+    expect(path).toMatch(/fp-comment-[^/]+\/body\.md$/)
+    await expect(readdir(dirname(path as string))).rejects.toThrow()
+  })
+
+  test("a body with surrounding whitespace is compared as fp stores it, so a retry writes nothing", async () => {
+    const padded = `  ${BODY}  \n`
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await run(
+        withService((service) =>
+          service.ensureMilestoneComment(project, CHILD_B, MARKER, padded),
+        ),
+      )
+    }
+    const comments = await storedComments(CHILD_B)
+    expect(comments).toHaveLength(1)
+    expect(comments[0]?.content).toBe(BODY.trim())
+    expect(
+      (await trackedCalls()).filter((line) => line.startsWith("comment add ")),
+    ).toHaveLength(1)
+    expect(
+      (await trackedCalls()).some((line) => line.startsWith("comment update ")),
+    ).toBe(false)
+  })
+
+  test("a comment that only quotes the marker is never the target, even when it is the only one carrying it", async () => {
+    await writeFile(
+      join(fixturesDirectory, `comments-${CHILD_B}.json`),
+      JSON.stringify({ comments: [] }),
+    )
+    const quoting = `Seen this?\n\n> ${MARKER}\n\nThanks.`
+    await addForeignComment(CHILD_B, quoting)
+    await run(
+      withService((service) =>
+        service.ensureMilestoneComment(project, CHILD_B, MARKER, BODY),
+      ),
+    )
+    const comments = await storedComments(CHILD_B)
+    expect(comments.map((comment) => comment.content)).toEqual([
+      BODY.trim(),
+      quoting,
+    ])
+  })
+
+  test("when two comments carry the marker, the oldest is the one kept up to date", async () => {
+    await markedComments(CHILD_B)
+    await addForeignComment(
+      CHILD_B,
+      `Duplicate from an earlier bug.\n\n${MARKER}`,
+    )
+    const revised = `Work resumed.\n\n${MARKER}`
+    await run(
+      withService((service) =>
+        service.ensureMilestoneComment(project, CHILD_B, MARKER, revised),
+      ),
+    )
+    const comments = await storedComments(CHILD_B)
+    expect(
+      comments.find((comment) => comment.id === "comment-1")?.content,
+    ).toBe(revised)
+    expect(
+      comments.find((comment) => comment.id === "foreign-1")?.content,
+    ).toContain("Duplicate")
+  })
+
+  test("reports a marked comment that vanished before the update as comment_not_found", async () => {
+    await markedComments(CHILD_B)
+    await marker("stale-comment")
+    const error = await failureOf(
+      withService((service) =>
+        service.ensureMilestoneComment(
+          project,
+          CHILD_B,
+          MARKER,
+          `Changed.\n\n${MARKER}`,
+        ),
+      ),
+    )
+    expect(error.kind).toBe("comment_not_found")
+    expect(error.message).toContain("no longer exists")
+  })
+})
+
+describe("fpMilestoneMarker", () => {
+  test("is the Linear form: ready-for-agent:<kind>:<workItemId>", () => {
+    expect(fpMilestoneMarker("completion", "wi-01J")).toBe(
+      "ready-for-agent:completion:wi-01J",
+    )
   })
 })
