@@ -1112,6 +1112,21 @@ describe("FpService.ensureMilestoneComment", () => {
     await expect(readdir(dirname(path as string))).rejects.toThrow()
   })
 
+  test("a CRLF body whose marker is not its last line is still recognised on retry", async () => {
+    const crlf = `Started.\r\n\r\n${MARKER}\r\nThanks.\r\n`
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await run(
+        withService((service) =>
+          service.ensureMilestoneComment(project, CHILD_B, MARKER, crlf),
+        ),
+      )
+    }
+    expect(await storedComments(CHILD_B)).toHaveLength(1)
+    expect(
+      (await trackedCalls()).filter((line) => line.startsWith("comment add ")),
+    ).toHaveLength(1)
+  })
+
   test("a body with surrounding whitespace is compared as fp stores it, so a retry writes nothing", async () => {
     const padded = `  ${BODY}  \n`
     for (let attempt = 0; attempt < 2; attempt += 1) {

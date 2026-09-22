@@ -140,6 +140,7 @@ const findMarked = (
   comments: readonly FpComment[],
   marker: string,
 ): FpComment | null => {
+  // `\r` is a line terminator for `$` under the m flag, so CRLF bodies match.
   const ownLine = new RegExp(`^${escapeRegExp(marker)}$`, "m")
   return (
     [...comments].reverse().find((comment) => ownLine.test(comment.content)) ??
