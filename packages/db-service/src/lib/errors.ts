@@ -119,6 +119,8 @@ export class InvalidRepositorySettingsError extends Schema.TaggedErrorClass<Inva
       "issueTracker",
       "linearProjectId",
       "linearWorkflowStatuses",
+      "fpProjectDirectory",
+      "fpWorkflowStatuses",
     ]),
     message: Schema.String,
   },

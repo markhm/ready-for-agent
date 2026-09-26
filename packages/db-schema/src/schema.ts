@@ -84,6 +84,16 @@ export const repository = snakeCase.table(
      * JSON array of per-team In Progress/Done workflow status selections.
      */
     linearWorkflowStatuses: text().notNull().default("[]"),
+    /**
+     * Registered fp project folder when Issue Tracker is fp. Null otherwise.
+     * Unique among Repositories when set: one fp project maps to one
+     * Repository.
+     */
+    fpProjectDirectory: text(),
+    /** fp status set when implementation starts. Null unless fp. */
+    fpInProgressStatus: text(),
+    /** fp status set when the Issue completes. Null unless fp. */
+    fpDoneStatus: text(),
     issuesReconciledAt: integer({ mode: "number" }),
     createdAt: integer({ mode: "number" })
       .notNull()
@@ -102,6 +112,11 @@ export const repository = snakeCase.table(
       .on(t.linearProjectId)
       .where(
         sql`${t.linearProjectId} IS NOT NULL AND ${t.linearProjectId} != ''`,
+      ),
+    uniqueIndex("repository_fp_project_directory_uidx")
+      .on(t.fpProjectDirectory)
+      .where(
+        sql`${t.fpProjectDirectory} IS NOT NULL AND ${t.fpProjectDirectory} != ''`,
       ),
   ],
 )
