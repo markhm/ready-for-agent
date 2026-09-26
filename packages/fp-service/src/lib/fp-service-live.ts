@@ -1,5 +1,5 @@
 import { access, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { Duration, Effect, Layer, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
@@ -14,7 +14,9 @@ import {
   parseFpCommentList,
   parseFpIssueList,
   parseFpIssueShow,
+  parseFpProjectList,
   parseFpProjectRemote,
+  parseFpRegisteredStatuses,
   parseFpVersion,
 } from "./fp-cli-output.js"
 import { FpService, type FpServiceShape } from "./fp-service.js"
@@ -257,6 +259,33 @@ export const makeFpService = (
   ): Effect.Effect<A, FpRequestError> =>
     Effect.try({
       try: () => parse(result.stdout),
+      catch: (cause) =>
+        requestError(
+          `Could not read fp output while ${describe}.`,
+          { ...result, kind: "unreadable_output" },
+          cause,
+        ),
+    })
+
+  /**
+   * For commands whose text lands on either stream: fp 0.25.0 prints `fp
+   * guide` on stderr (stdout is a blank line) and `fp project list` on both.
+   * Parse stdout, and stderr only when stdout does not parse, so output
+   * printed twice is not read twice.
+   */
+  const parseEitherStreamOrFail = <A>(
+    describe: string,
+    result: FpCliResult,
+    parse: (text: string) => A,
+  ): Effect.Effect<A, FpRequestError> =>
+    Effect.try({
+      try: () => {
+        try {
+          return parse(result.stdout)
+        } catch {
+          return parse(result.stderr)
+        }
+      },
       catch: (cause) =>
         requestError(
           `Could not read fp output while ${describe}.`,
@@ -520,6 +549,41 @@ export const makeFpService = (
     return operator.email
   })
 
+  /**
+   * `fp project list` reads fp's machine-wide registry, so it runs from the
+   * operator's home directory rather than from any one project.
+   */
+  const listRegisteredProjects = Effect.fn("FpService.listRegisteredProjects")(
+    function* () {
+      const describe = "listing registered fp projects"
+      const result = yield* runFpOk(homedir(), ["project", "list"], describe)
+      return yield* parseEitherStreamOrFail(
+        describe,
+        result,
+        parseFpProjectList,
+      )
+    },
+  )
+
+  const listProjectStatuses = Effect.fn("FpService.listProjectStatuses")(
+    function* (projectDirectory: string) {
+      const describe = `reading the registered statuses of ${projectDirectory}`
+      const result = yield* runFpOk(projectDirectory, ["guide"], describe)
+      const statuses = yield* parseEitherStreamOrFail(
+        describe,
+        result,
+        parseFpRegisteredStatuses,
+      )
+      if (statuses === null) {
+        return yield* requestError(
+          `Failed ${describe}: ${projectDirectory} is not a registered fp project.`,
+          { ...result, kind: "project_not_registered" },
+        )
+      }
+      return statuses
+    },
+  )
+
   const checkReadiness = Effect.fn("FpService.checkReadiness")(function* (
     projectDirectory: string,
   ) {
@@ -676,6 +740,8 @@ export const makeFpService = (
     getAuthenticatedUserLogin,
     listReadyIssues,
     getIssue,
+    listRegisteredProjects,
+    listProjectStatuses,
     checkReadiness,
     updateIssueStatus,
     ensureMilestoneComment,

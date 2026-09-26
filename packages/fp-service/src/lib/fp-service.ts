@@ -1,5 +1,6 @@
 import { Context, type Effect } from "effect"
 import type { FpRequestError } from "./errors.js"
+import type { FpRegisteredProject } from "./fp-cli-output.js"
 import type {
   FpIssue,
   FpIssueSnapshot,
@@ -42,6 +43,18 @@ export interface FpServiceShape {
     options: FpProjectOptions,
     issueId: string,
   ) => Effect.Effect<FpIssueSnapshot, FpServiceError>
+  /**
+   * The fp projects registered on this machine, from `fp project list`,
+   * orphaned ones included and marked.
+   */
+  readonly listRegisteredProjects: () => Effect.Effect<
+    readonly FpRegisteredProject[],
+    FpServiceError
+  >
+  /** The statuses registered in one fp project, in fp's order. */
+  readonly listProjectStatuses: (
+    projectDirectory: string,
+  ) => Effect.Effect<readonly string[], FpServiceError>
   /** The CLI is on the path and the directory resolves to an fp project. */
   readonly checkReadiness: (
     projectDirectory: string,

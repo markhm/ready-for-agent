@@ -272,6 +272,20 @@ if [ "$1" = "project" ] && [ "$2" = "remote" ]; then
   printf '%s\\n' '{"projectId":"proj-test","workspaceSlug":"ws-test","serverUrl":"https://app.fp.dev","linkedAt":"2026-09-21T06:17:07.152Z","lastSyncedAt":"2026-09-22T11:12:06.121Z"}'
   exit 0
 fi
+if [ "$1" = "project" ] && [ "$2" = "list" ]; then
+  if [ -f "${fixtures}/project-list-unreadable" ]; then echo "Something else entirely"; exit 0; fi
+  # fp 0.25.0 prints the list on stdout and stderr alike.
+  list() { printf '%s\\n' "" "Registered projects:" "" "  alpha" "    Path:    /work/alpha" "    Storage: /home/op/.fiberplane/projects/alpha-1/" "" "  gone (orphaned)" "    Path:    /work/gone" "    Storage: /home/op/.fiberplane/projects/gone-2/" ""; }
+  list; list >&2
+  exit 0
+fi
+if [ "$1" = "guide" ]; then
+  # fp 0.25.0 prints the guide on stderr; stdout is a blank line.
+  echo ""
+  if [ -f "${fixtures}/unregistered" ]; then printf '%s\\n' "## Project context" "- Not in an fp project. Run fp init first." "" >&2; exit 0; fi
+  printf '%s\\n' "## Project context" "- Prefix: FP" "- Registered statuses (in order): todo, selected, in-progress, done" "  - Default for new issues: todo" "" >&2
+  exit 0
+fi
 if [ -f "${fixtures}/unregistered" ]; then
   printf '%s\\n' ".fp directory not found" "  Suggestion: Run 'fp init' to initialize a project" >&2
   exit 1
@@ -864,6 +878,45 @@ const trackedCalls = async (): Promise<readonly string[]> =>
   (await calls()).filter(
     (line) => line.startsWith("issue update ") || line.startsWith("comment "),
   )
+
+describe("FpService.listRegisteredProjects", () => {
+  test("lists the machine's registered projects, orphaned ones marked", async () => {
+    const projects = await run(
+      withService((service) => service.listRegisteredProjects()),
+    )
+    expect(projects).toEqual([
+      { name: "alpha", path: "/work/alpha", orphaned: false },
+      { name: "gone", path: "/work/gone", orphaned: true },
+    ])
+    expect(await calls()).toEqual(["project list"])
+  })
+
+  test("output that is not a project list is unreadable, not empty", async () => {
+    await marker("project-list-unreadable")
+    const failure = await failureOf(
+      withService((service) => service.listRegisteredProjects()),
+    )
+    expect(failure.kind).toBe("unreadable_output")
+  })
+})
+
+describe("FpService.listProjectStatuses", () => {
+  test("reads the project's registered statuses in fp's order", async () => {
+    const statuses = await run(
+      withService((service) => service.listProjectStatuses(directory)),
+    )
+    expect(statuses).toEqual(["todo", "selected", "in-progress", "done"])
+    expect(await calls()).toEqual(["guide"])
+  })
+
+  test("a folder that is not an fp project fails as not registered", async () => {
+    await marker("unregistered")
+    const failure = await failureOf(
+      withService((service) => service.listProjectStatuses(directory)),
+    )
+    expect(failure.kind).toBe("project_not_registered")
+  })
+})
 
 describe("FpService.updateIssueStatus", () => {
   test("moves an open Issue to the target status and reads the result back", async () => {
