@@ -19,6 +19,7 @@ import {
   makeRepositoryRecord,
   stubDbService,
 } from "@ready-for-agent/db-service/test"
+import { makeFpServiceTest } from "@ready-for-agent/fp-service"
 import {
   GitHubService,
   type GitHubServiceShape,
@@ -480,6 +481,7 @@ describe("production GraphQL SSE idle timeout", () => {
           Layer.succeed(GitLabService, defaultGitlab),
           Layer.succeed(AzureDevOpsService, defaultAzureDevOps),
           Layer.succeed(LinearService, defaultLinearServiceShape),
+          makeFpServiceTest(),
           Layer.succeed(LocalGit, {
             inspect: () => Effect.die("unused"),
           }),

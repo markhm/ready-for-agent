@@ -26,6 +26,11 @@ import {
   stubDbService,
 } from "@ready-for-agent/db-service/test"
 import {
+  FpRequestError,
+  type FpServiceTestFixture,
+  makeFpServiceTest,
+} from "@ready-for-agent/fp-service"
+import {
   GitHubRepositoryUnavailableError,
   GitHubRequestError,
   GitHubService,
@@ -348,6 +353,7 @@ const makeRuntime = (
   gitlabOverrides: Partial<GitLabServiceShape> = {},
   azureDevOpsOverrides: Partial<AzureDevOpsServiceShape> = {},
   linearOverrides: Partial<LinearServiceShape> = {},
+  fpFixture: FpServiceTestFixture = {},
 ) => {
   const db = stubDbService({
     getConfig: Effect.succeed(config),
@@ -390,6 +396,18 @@ const makeRuntime = (
           input.linearWorkflowStatuses === undefined
             ? repository.linearWorkflowStatuses
             : [...input.linearWorkflowStatuses],
+        fpProjectDirectory:
+          input.fpProjectDirectory === undefined
+            ? repository.fpProjectDirectory
+            : input.fpProjectDirectory,
+        fpInProgressStatus:
+          input.fpInProgressStatus === undefined
+            ? repository.fpInProgressStatus
+            : input.fpInProgressStatus,
+        fpDoneStatus:
+          input.fpDoneStatus === undefined
+            ? repository.fpDoneStatus
+            : input.fpDoneStatus,
       }),
     listRepositories: Effect.succeed([repository]),
     listSelectedOrInUseBackendIds: Effect.succeed([
@@ -581,6 +599,7 @@ const makeRuntime = (
         ...defaultLinearServiceShape,
         ...linearOverrides,
       }),
+      makeFpServiceTest(fpFixture),
       localGit,
       directoryPicker,
     ),
@@ -1812,6 +1831,187 @@ describe("GraphQL API", () => {
               doneStateId: "done",
             },
           ],
+        },
+      },
+    })
+  })
+
+  test("passes fp project settings through to the Repository", async () => {
+    const saved = await createGraphqlApi(runtime).fetch(
+      graphqlRequest({
+        query: `mutation UpdateRepositorySettings($input: UpdateRepositorySettingsInput!) {
+          updateRepositorySettings(input: $input) {
+            fpProjectDirectory
+            fpInProgressStatus
+            fpDoneStatus
+          }
+        }`,
+        variables: {
+          input: {
+            repositoryId: repository.id,
+            paused: true,
+            defaultModel: null,
+            defaultThinkingLevel: null,
+            reviewModel: null,
+            reviewThinkingLevel: null,
+            mergePolicy: "OFF",
+            includeAllIssueAuthors: false,
+            waitForReadyForReviewChecks: true,
+            fpProjectDirectory: "/work/widgets",
+            fpInProgressStatus: "in-progress",
+            fpDoneStatus: "done",
+          },
+        },
+      }),
+    )
+    expect(await saved.json()).toEqual({
+      data: {
+        updateRepositorySettings: {
+          fpProjectDirectory: "/work/widgets",
+          fpInProgressStatus: "in-progress",
+          fpDoneStatus: "done",
+        },
+      },
+    })
+  })
+
+  test("lists registered fp projects, and reports when fp cannot be read", async () => {
+    await runtime.dispose()
+    runtime = makeRuntime(
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {
+        registeredProjects: [
+          { name: "widgets", path: "/work/widgets", orphaned: false },
+          { name: "gone", path: "/work/gone", orphaned: true },
+        ],
+      },
+    )
+    const listed = await createGraphqlApi(runtime).fetch(
+      graphqlRequest({
+        query: `{ fpProjects { available message projects { name path orphaned } } }`,
+      }),
+    )
+    expect(await listed.json()).toEqual({
+      data: {
+        fpProjects: {
+          available: true,
+          message: null,
+          projects: [
+            { name: "widgets", path: "/work/widgets", orphaned: false },
+            { name: "gone", path: "/work/gone", orphaned: true },
+          ],
+        },
+      },
+    })
+
+    await runtime.dispose()
+    runtime = makeRuntime(
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {
+        error: new FpRequestError({
+          message: "fp is not on the PATH",
+          kind: "spawn_failed",
+        }),
+      },
+    )
+    const unavailable = await createGraphqlApi(runtime).fetch(
+      graphqlRequest({
+        query: `{ fpProjects { available message projects { name } } }`,
+      }),
+    )
+    expect(await unavailable.json()).toEqual({
+      data: {
+        fpProjects: {
+          available: false,
+          message: "fp is not on the PATH",
+          projects: [],
+        },
+      },
+    })
+  })
+
+  test("describes one fp project, or why fp cannot use the folder", async () => {
+    await runtime.dispose()
+    runtime = makeRuntime(
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {
+        projectStatuses: ["todo", "selected", "in-progress", "done"],
+      },
+    )
+    const ready = await createGraphqlApi(runtime).fetch(
+      graphqlRequest({
+        query: `{ fpProject(projectDirectory: "/work/widgets") { ready message version workspaceSlug statuses } }`,
+      }),
+    )
+    expect(await ready.json()).toEqual({
+      data: {
+        fpProject: {
+          ready: true,
+          message: null,
+          version: "0.25.0",
+          workspaceSlug: "ws-test",
+          statuses: ["todo", "selected", "in-progress", "done"],
+        },
+      },
+    })
+
+    await runtime.dispose()
+    runtime = makeRuntime(
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {
+        readiness: {
+          _tag: "project_not_registered",
+          message: "/work/widgets is not a registered fp project.",
+        },
+      },
+    )
+    const notReady = await createGraphqlApi(runtime).fetch(
+      graphqlRequest({
+        query: `{ fpProject(projectDirectory: "/work/widgets") { ready message statuses } }`,
+      }),
+    )
+    expect(await notReady.json()).toEqual({
+      data: {
+        fpProject: {
+          ready: false,
+          message: "/work/widgets is not a registered fp project.",
+          statuses: [],
         },
       },
     })
