@@ -1875,6 +1875,209 @@ describe("GraphQL API", () => {
     })
   })
 
+  test("refuses fp settings the fp CLI does not register, before storing anything", async () => {
+    const settingsCalls: unknown[] = []
+    await runtime.dispose()
+    runtime = makeRuntime(
+      {
+        updateRepositorySettings: (input) => {
+          settingsCalls.push(input)
+          return Effect.succeed({
+            ...repository,
+            issueTracker: "fp",
+            fpProjectDirectory: input.fpProjectDirectory ?? null,
+            fpInProgressStatus: input.fpInProgressStatus ?? null,
+            fpDoneStatus: input.fpDoneStatus ?? null,
+          })
+        },
+      },
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {
+        registeredProjects: [
+          { name: "widgets", path: "/work/widgets", orphaned: false },
+          { name: "gone", path: "/work/gone", orphaned: true },
+        ],
+        projectStatuses: ["todo", "in-progress", "review", "done"],
+      },
+    )
+    const save = async (fp: {
+      readonly fpProjectDirectory: string | null
+      readonly fpInProgressStatus: string | null
+      readonly fpDoneStatus: string | null
+    }) =>
+      (await (
+        await createGraphqlApi(runtime).fetch(
+          graphqlRequest({
+            query: `mutation UpdateRepositorySettings($input: UpdateRepositorySettingsInput!) {
+              updateRepositorySettings(input: $input) { fpProjectDirectory }
+            }`,
+            variables: {
+              input: {
+                repositoryId: repository.id,
+                paused: false,
+                defaultModel: null,
+                defaultThinkingLevel: null,
+                reviewModel: null,
+                reviewThinkingLevel: null,
+                mergePolicy: "OFF",
+                includeAllIssueAuthors: false,
+                waitForReadyForReviewChecks: true,
+                issueTracker: "fp",
+                ...fp,
+              },
+            },
+          }),
+        )
+      ).json()) as {
+        data?: unknown
+        errors?: ReadonlyArray<{
+          message?: string
+          extensions?: { code?: string; field?: string }
+        }>
+      }
+
+    const refusals = [
+      {
+        input: {
+          fpProjectDirectory: "/work/unknown",
+          fpInProgressStatus: "in-progress",
+          fpDoneStatus: "done",
+        },
+        field: "fpProjectDirectory",
+        message: "That folder is not a registered fp project",
+      },
+      {
+        input: {
+          fpProjectDirectory: "/work/gone",
+          fpInProgressStatus: "in-progress",
+          fpDoneStatus: "done",
+        },
+        field: "fpProjectDirectory",
+        message: "That fp project's folder no longer exists",
+      },
+      {
+        input: {
+          fpProjectDirectory: "/work/widgets",
+          fpInProgressStatus: "doing",
+          fpDoneStatus: "done",
+        },
+        field: "fpWorkflowStatuses",
+        message: "doing is not a status of that fp project",
+      },
+      {
+        input: {
+          fpProjectDirectory: "/work/widgets",
+          fpInProgressStatus: "in-progress",
+          fpDoneStatus: "closed",
+        },
+        field: "fpWorkflowStatuses",
+        message: "closed is not a status of that fp project",
+      },
+    ]
+    for (const refusal of refusals) {
+      const result = await save(refusal.input)
+      expect(result.errors?.[0]?.message).toBe(refusal.message)
+      expect(result.errors?.[0]?.extensions).toEqual({
+        code: "INVALID_REPOSITORY_SETTINGS",
+        field: refusal.field,
+      })
+    }
+    expect(settingsCalls).toEqual([])
+
+    // Registered project and statuses, padded the way a client might send
+    // them: accepted and passed on to storage.
+    expect(
+      await save({
+        fpProjectDirectory: " /work/widgets ",
+        fpInProgressStatus: "review",
+        fpDoneStatus: "done",
+      }),
+    ).toEqual({
+      data: {
+        updateRepositorySettings: { fpProjectDirectory: " /work/widgets " },
+      },
+    })
+    // Missing values are storage validation's to judge, not the fp CLI's.
+    expect(
+      (
+        await save({
+          fpProjectDirectory: null,
+          fpInProgressStatus: null,
+          fpDoneStatus: null,
+        })
+      ).errors,
+    ).toBeUndefined()
+    expect(settingsCalls).toHaveLength(2)
+  })
+
+  test("refuses fp settings when the fp CLI cannot be read", async () => {
+    await runtime.dispose()
+    runtime = makeRuntime(
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {
+        error: new FpRequestError({
+          message: "fp is not on the PATH",
+          kind: "spawn_failed",
+        }),
+      },
+    )
+    const result = (await (
+      await createGraphqlApi(runtime).fetch(
+        graphqlRequest({
+          query: `mutation UpdateRepositorySettings($input: UpdateRepositorySettingsInput!) {
+            updateRepositorySettings(input: $input) { fpProjectDirectory }
+          }`,
+          variables: {
+            input: {
+              repositoryId: repository.id,
+              paused: false,
+              defaultModel: null,
+              defaultThinkingLevel: null,
+              reviewModel: null,
+              reviewThinkingLevel: null,
+              mergePolicy: "OFF",
+              includeAllIssueAuthors: false,
+              waitForReadyForReviewChecks: true,
+              issueTracker: "fp",
+              fpProjectDirectory: "/work/widgets",
+              fpInProgressStatus: "in-progress",
+              fpDoneStatus: "done",
+            },
+          },
+        }),
+      )
+    ).json()) as {
+      errors?: ReadonlyArray<{
+        message?: string
+        extensions?: { code?: string; field?: string }
+      }>
+    }
+    expect(result.errors?.[0]?.message).toBe(
+      "Could not list the registered fp projects: fp is not on the PATH",
+    )
+    expect(result.errors?.[0]?.extensions).toEqual({
+      code: "INVALID_REPOSITORY_SETTINGS",
+      field: "fpProjectDirectory",
+    })
+  })
+
   test("lists registered fp projects, and reports when fp cannot be read", async () => {
     await runtime.dispose()
     runtime = makeRuntime(

@@ -114,6 +114,7 @@ import { preflightRepositoryIntake } from "./repository-intake-preflight.js"
 import { retryWorkItems } from "./repository-retry.js"
 import { toGraphQLError } from "./to-graphql-error.js"
 import { validateAgentModelsAgainstCatalog } from "./validate-agent-models.js"
+import { validateFpProjectSettings } from "./validate-fp-project-settings.js"
 import { projectWorkItemCiRepair } from "./work-item-ci-repair-projection.js"
 import {
   lifecycleLabels,
@@ -2114,6 +2115,22 @@ export const createGraphqlApi = <R>(
                           "issueTracker must be a supported Issue Tracker",
                       })
                     }
+                    yield* validateFpProjectSettings({
+                      issueTracker:
+                        args.input.issueTracker ?? repository.issueTracker,
+                      fpProjectDirectory:
+                        args.input.fpProjectDirectory === undefined
+                          ? repository.fpProjectDirectory
+                          : args.input.fpProjectDirectory,
+                      fpInProgressStatus:
+                        args.input.fpInProgressStatus === undefined
+                          ? repository.fpInProgressStatus
+                          : args.input.fpInProgressStatus,
+                      fpDoneStatus:
+                        args.input.fpDoneStatus === undefined
+                          ? repository.fpDoneStatus
+                          : args.input.fpDoneStatus,
+                    })
                     const updated = yield* db.updateRepositorySettings({
                       repositoryId: args.input.repositoryId,
                       ...(args.input.forge === undefined && !identityChanging
