@@ -60,6 +60,18 @@ export interface FpServiceShape {
     projectDirectory: string,
   ) => Effect.Effect<FpReadiness>
   /**
+   * Give each of these Ready Issues without a number the next number in its
+   * fp project (one more than the highest `rfa-number` there), written to
+   * fp and verified by reading it back (ADR 0074). Returns the Issues with
+   * every number filled, references to them included. Numbering runs one
+   * project at a time; it fails, writing nothing, when the project holds a
+   * duplicate number or a value that is not a positive integer.
+   */
+  readonly numberReadyIssues: (
+    options: FpProjectOptions,
+    issues: readonly FpIssue[],
+  ) => Effect.Effect<readonly FpIssue[], FpServiceError>
+  /**
    * Move one Issue to a registered status. An Issue already in that status,
    * or already closed by the project's closed statuses, is accepted without
    * a write. The write is verified by reading the Issue back: fp's success

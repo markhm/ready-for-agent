@@ -1,10 +1,11 @@
 import { access, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
-import { Duration, Effect, Layer, Stream } from "effect"
+import { Duration, Effect, Layer, Semaphore, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { FpRequestError } from "./errors.js"
 import {
+  FP_NUMBER_PROPERTY,
   type FpComment,
   type FpListIssue,
   type FpShowIssue,
@@ -17,6 +18,7 @@ import {
   parseFpIssueShow,
   parseFpProjectList,
   parseFpProjectRemote,
+  parseFpRegisteredProperties,
   parseFpRegisteredStatuses,
   parseFpVersion,
 } from "./fp-cli-output.js"
@@ -164,6 +166,10 @@ export const makeFpService = (
   const command = options.command ?? FP_CLI_COMMAND
   const timeout = options.timeout ?? FP_CLI_TIMEOUT
   const showCache = new Map<string, ShowCacheEntry>()
+  // One allocation at a time: refresh can be started by a queued job and by
+  // polling, and two allocations reading the same highest number would
+  // hand it out twice (ADR 0074's single allocator).
+  const numbering = Semaphore.makeUnsafe(1)
 
   const runFp = Effect.fn("FpService.runFp")(function* (
     cwd: string,
@@ -244,7 +250,9 @@ export const makeFpService = (
               ? "the comment no longer exists"
               : kind === "invalid_status"
                 ? "the status is not registered in this fp project"
-                : `fp exited with code ${result.exitCode}`
+                : kind === "property_not_registered"
+                  ? `the fp project does not register the ${FP_NUMBER_PROPERTY} property; install the ready-for-agent rfa-number fp extension`
+                  : `fp exited with code ${result.exitCode}`
       return yield* requestError(`Failed ${describe}: ${detail}.`, {
         ...result,
         kind,
@@ -542,6 +550,99 @@ export const makeFpService = (
     )
   })
 
+  const writeIssueNumber = Effect.fn("FpService.writeIssueNumber")(function* (
+    cwd: string,
+    issueId: string,
+    number: number,
+  ) {
+    const describe = `numbering fp issue ${issueId} as ${number}`
+    yield* runFpOk(
+      cwd,
+      [
+        "issue",
+        "update",
+        issueId,
+        "--property",
+        `${FP_NUMBER_PROPERTY}=${number}`,
+      ],
+      describe,
+    )
+    const after = fpIssueNumber(yield* showIssue(cwd, issueId))
+    if (after.kind !== "number" || after.number !== number) {
+      return yield* requestError(
+        `fp reported ${describe}, but the Issue reads back without that number.`,
+        { kind: "write_not_applied" },
+      )
+    }
+  })
+
+  const numberReadyIssues = Effect.fn("FpService.numberReadyIssues")(
+    function* (projectOptions: FpProjectOptions, issues: readonly FpIssue[]) {
+      const cwd = projectOptions.projectDirectory
+      // A fresh list, not the discovery poll's: the numbers in fp are the
+      // record, and another write may have landed since.
+      const all = yield* listIssues(cwd)
+      if (all.some((issue) => issue.properties === undefined)) {
+        return yield* requestError(
+          "This fp build lists Issues without their properties, so numbers cannot be read. Run `fp update`.",
+          { kind: "outdated_cli" },
+        )
+      }
+      const nameOf = (listed: FpListIssue) =>
+        issues.find((issue) => issue.nativeId === listed.id)?.displayId ??
+        listed.shortId
+      const numbers = new Map<string, number>()
+      const holders = new Map<number, FpListIssue>()
+      for (const listed of all) {
+        const value = fpIssueNumber(listed)
+        if (value.kind === "invalid") {
+          return yield* requestError(
+            `fp issue ${nameOf(listed)} has ${FP_NUMBER_PROPERTY} "${value.raw}", which is not a positive integer; correct or clear it in fp.`,
+            { kind: "invalid_issue_number" },
+          )
+        }
+        if (value.kind === "number") {
+          const holder = holders.get(value.number)
+          if (holder !== undefined) {
+            return yield* requestError(
+              `fp issues ${nameOf(holder)} and ${nameOf(listed)} both have ${FP_NUMBER_PROPERTY} ${value.number}; clear one of them in fp.`,
+              { kind: "duplicate_issue_number" },
+            )
+          }
+          holders.set(value.number, listed)
+          numbers.set(listed.id, value.number)
+        }
+      }
+      let highest = Math.max(0, ...holders.keys())
+      const listedIds = new Set(all.map((listed) => listed.id))
+      for (const issue of issues) {
+        // An Issue that left the project since discovery is not numbered.
+        if (numbers.has(issue.nativeId) || !listedIds.has(issue.nativeId)) {
+          continue
+        }
+        highest += 1
+        yield* writeIssueNumber(cwd, issue.nativeId, highest)
+        numbers.set(issue.nativeId, highest)
+      }
+      const numberOf = (nativeId: string) => numbers.get(nativeId) ?? null
+      return issues.map(
+        (issue): FpIssue => ({
+          ...issue,
+          number: numberOf(issue.nativeId),
+          parent:
+            issue.parent === null
+              ? null
+              : { ...issue.parent, number: numberOf(issue.parent.nativeId) },
+          blockedBy: issue.blockedBy.map((blocker) => ({
+            ...blocker,
+            number: numberOf(blocker.nativeId),
+          })),
+        }),
+      )
+    },
+    (effect) => numbering.withPermits(1)(effect),
+  )
+
   const getIssue = Effect.fn("FpService.getIssue")(function* (
     projectOptions: FpProjectOptions,
     issueId: string,
@@ -673,6 +774,30 @@ export const makeFpService = (
     if (remote._tag === "failed") {
       return { _tag: "cli_error" as const, message: remote.message }
     }
+    const guide = yield* runFpOk(
+      projectDirectory,
+      ["guide"],
+      "reading the fp project's registered properties",
+    ).pipe(
+      Effect.map((result) => ({ _tag: "read" as const, result })),
+      Effect.catch((error) =>
+        Effect.succeed({ _tag: "failed" as const, message: error.message }),
+      ),
+    )
+    if (guide._tag === "failed") {
+      return { _tag: "cli_error" as const, message: guide.message }
+    }
+    // fp prints the guide on stderr.
+    if (
+      !parseFpRegisteredProperties(combinedOutput(guide.result)).includes(
+        FP_NUMBER_PROPERTY,
+      )
+    ) {
+      return {
+        _tag: "number_property_missing" as const,
+        message: `The fp project does not register the ${FP_NUMBER_PROPERTY} property, where the harness keeps each Issue's number; install the ready-for-agent rfa-number fp extension.`,
+      }
+    }
     return { _tag: "ready" as const, version, remote: remote.value }
   })
 
@@ -763,6 +888,7 @@ export const makeFpService = (
   return {
     getAuthenticatedUserLogin,
     listReadyIssues,
+    numberReadyIssues,
     getIssue,
     listRegisteredProjects,
     listProjectStatuses,

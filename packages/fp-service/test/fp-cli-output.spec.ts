@@ -8,6 +8,7 @@ import {
   parseFpIssueShow,
   parseFpProjectList,
   parseFpProjectRemote,
+  parseFpRegisteredProperties,
   parseFpRegisteredStatuses,
   parseFpVersion,
 } from "../src/lib/fp-cli-output.js"
@@ -334,6 +335,14 @@ describe("fp failure classification", () => {
     expect(classifyFpFailure("segfault")).toBe("unknown")
   })
 
+  test("recognises a property the project does not register (captured 2026-10-04, stderr)", () => {
+    expect(
+      classifyFpFailure(
+        "Invalid value for extension property 'rfa-number': Property is not registered\n",
+      ),
+    ).toBe("property_not_registered")
+  })
+
   test("recognises a comment that no longer exists", () => {
     expect(
       classifyFpFailure(
@@ -448,6 +457,27 @@ const GUIDE_OUTSIDE_PROJECT = [
   "- Not in an fp project. Run `fp init` first.",
   "",
 ].join("\n")
+
+describe("parseFpRegisteredProperties", () => {
+  test("reads the property keys without their kinds", () => {
+    expect(parseFpRegisteredProperties(GUIDE_OUTPUT)).toEqual([
+      "labels",
+      "workstation",
+    ])
+  })
+
+  test("sees rfa-number where its extension is loaded (captured 2026-10-04)", () => {
+    expect(
+      parseFpRegisteredProperties(
+        "- Other registered properties: labels (multiselect), rfa-number (text)\n- Loaded extensions: labels, rfa-number\n",
+      ),
+    ).toEqual(["labels", "rfa-number"])
+  })
+
+  test("a guide without the line registers no properties", () => {
+    expect(parseFpRegisteredProperties(GUIDE_OUTSIDE_PROJECT)).toEqual([])
+  })
+})
 
 describe("parseFpRegisteredStatuses", () => {
   test("reads the registered statuses in fp's order", () => {

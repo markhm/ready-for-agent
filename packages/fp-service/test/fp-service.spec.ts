@@ -198,6 +198,26 @@ if (op === "status") {
   const json = JSON.stringify(show)
   writeFileSync(showFile(show.id), json)
   writeFileSync(showFile(show.displayId), json)
+} else if (op === "property") {
+  const eq = value.indexOf("=")
+  const key = value.slice(0, eq)
+  const raw = value.slice(eq + 1)
+  const show = readJson(showFile(target))
+  const updatedAt = new Date().toISOString()
+  show.properties = { ...(show.properties ?? {}), [key]: raw }
+  show.updatedAt = updatedAt
+  const json = JSON.stringify(show)
+  writeFileSync(showFile(show.id), json)
+  writeFileSync(showFile(show.displayId), json)
+  const listFile = join(fixtures, "list.json")
+  const list = readJson(listFile)
+  for (const issue of list.issues) {
+    if (issue.id === show.id) {
+      issue.properties = { ...(issue.properties ?? {}), [key]: raw }
+      issue.updatedAt = updatedAt
+    }
+  }
+  writeFileSync(listFile, JSON.stringify(list))
 } else if (op === "list") {
   process.stdout.write(JSON.stringify(comments(readJson(showFile(target)).id)))
 } else if (op === "add") {
@@ -233,6 +253,16 @@ const fakeFpScript = (
 ): string => `#!/bin/sh
 printf '%s\\n' "$*" >> "${log}"
 notfound() { printf '%s\\n' "Issue $1 not found" "  Suggestion: Run 'fp issue list' to see available issues"; exit 1; }
+if [ "$1" = "issue" ] && [ "$2" = "update" ] && [ "$4" = "--property" ]; then
+  [ -f "${fixtures}/show-$3.json" ] || notfound "$3"
+  if [ -f "${fixtures}/no-number-property" ]; then
+    printf '%s\\n' "Invalid value for extension property '\${5%%=*}': Property is not registered" >&2
+    exit 1
+  fi
+  if [ ! -f "${fixtures}/silent" ]; then "${bun}" "${mutate}" property "${fixtures}" "$3" "$5" || exit 1; fi
+  printf '%s\\n' "" "✓ Updated $3:" "  - properties: \${5%%=*}" ""
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "update" ]; then
   if [ -f "${fixtures}/invalid-status" ]; then
     printf '%s\\n' "Invalid status: Status \\"$5\\" is not in the registered options." "  Suggestion: Use one of: todo, in-progress, done"
@@ -294,7 +324,8 @@ if [ "$1" = "guide" ]; then
   # fp 0.25.0 prints the guide on stderr; stdout is a blank line.
   echo ""
   if [ -f "${fixtures}/unregistered" ]; then printf '%s\\n' "## Project context" "- Not in an fp project. Run fp init first." "" >&2; exit 0; fi
-  printf '%s\\n' "## Project context" "- Prefix: FP" "- Registered statuses (in order): todo, selected, in-progress, done" "  - Default for new issues: todo" "" >&2
+  if [ -f "${fixtures}/no-number-property" ]; then properties="labels (multiselect)"; else properties="labels (multiselect), rfa-number (text)"; fi
+  printf '%s\\n' "## Project context" "- Prefix: FP" "- Registered statuses (in order): todo, selected, in-progress, done" "  - Default for new issues: todo" "- Other registered properties: $properties" "" >&2
   exit 0
 fi
 if [ -f "${fixtures}/unregistered" ]; then
@@ -892,6 +923,186 @@ describe("FpService.getAuthenticatedUserLogin", () => {
   })
 })
 
+describe("FpService.numberReadyIssues", () => {
+  // A holds 3 and the closed D holds 5, so the next number is 6; the Ready
+  // set in creation order is A, E, G, B.
+  const NUMBERED = PROJECT.map((issue) =>
+    issue.id === ROOT_A
+      ? { ...issue, number: "3" }
+      : issue.id === DONE_D
+        ? { ...issue, number: "5" }
+        : issue,
+  )
+
+  const numberWrites = async () =>
+    (await calls()).filter((line) => line.includes("--property rfa-number="))
+
+  const listedNumbers = async () => {
+    const list = JSON.parse(
+      await readFile(join(fixturesDirectory, "list.json"), "utf8"),
+    ) as {
+      issues: { id: string; properties?: Record<string, unknown> }[]
+    }
+    return new Map(
+      list.issues.map((issue) => [issue.id, issue.properties?.["rfa-number"]]),
+    )
+  }
+
+  const discoverAndNumber = (service: FpServiceShape) =>
+    Effect.flatMap(service.listReadyIssues(project), (issues) =>
+      service.numberReadyIssues(project, issues),
+    )
+
+  test("gives each Ready Issue without a number the next one in the project, in creation order, and reads it back", async () => {
+    await writeProject(NUMBERED)
+    const issues = await run(withService(discoverAndNumber))
+    expect(issues.map((issue) => [issue.title, issue.number])).toEqual([
+      ["Root A", 3],
+      ["Root E", 6],
+      ["Selected G", 7],
+      ["Child B", 8],
+    ])
+    // References follow: B's parent is A.
+    expect(issues[3]?.parent?.number).toBe(3)
+    // B's open blocker C is not Ready and stays without a number.
+    expect(issues[3]?.blockedBy.map((blocker) => blocker.number)).toEqual([
+      null,
+    ])
+    expect(await numberWrites()).toEqual([
+      `issue update ${ROOT_E} --property rfa-number=6`,
+      `issue update ${SELECTED_G} --property rfa-number=7`,
+      `issue update ${CHILD_B} --property rfa-number=8`,
+    ])
+    const stored = await listedNumbers()
+    expect(stored.get(ROOT_E)).toBe("6")
+    expect(stored.get(SELECTED_G)).toBe("7")
+    expect(stored.get(CHILD_B)).toBe("8")
+  })
+
+  test("a parent and a blocker numbered in the same pass are numbered in their references too", async () => {
+    // F (child of E) becomes Ready and is blocked by G; E and G get their
+    // numbers in this pass, so F's references must carry them.
+    await writeProject(
+      NUMBERED.map((issue) =>
+        issue.id === CHILD_F
+          ? {
+              ...issue,
+              labels: ["ready-for-agent"],
+              dependencies: [SELECTED_G],
+              createdAt: "2026-09-20T13:00:00.000Z",
+            }
+          : issue,
+      ),
+    )
+    const issues = await run(withService(discoverAndNumber))
+    const byTitle = new Map(issues.map((issue) => [issue.title, issue]))
+    expect(byTitle.get("Root E")?.number).toBe(6)
+    expect(byTitle.get("Selected G")?.number).toBe(7)
+    expect(byTitle.get("Child F")?.parent?.number).toBe(6)
+    expect(byTitle.get("Child F")?.blockedBy.map((b) => b.number)).toEqual([7])
+  })
+
+  test("an Issue keeps its number: a second pass writes nothing", async () => {
+    await writeProject(NUMBERED)
+    const service = await run(makeService())
+    const first = await run(discoverAndNumber(service))
+    await rm(logPath, { force: true })
+    const second = await run(discoverAndNumber(service))
+    expect(second.map((issue) => issue.number)).toEqual(
+      first.map((issue) => issue.number),
+    )
+    expect(await numberWrites()).toEqual([])
+  })
+
+  test("a number fp gained since discovery is kept, not overwritten", async () => {
+    await writeProject(NUMBERED)
+    const service = await run(makeService())
+    const discovered = await run(service.listReadyIssues(project))
+    // Someone numbers E by hand between discovery and numbering.
+    await writeProject(
+      NUMBERED.map((issue) =>
+        issue.id === ROOT_E ? { ...issue, number: "40" } : issue,
+      ),
+    )
+    const numbered = await run(service.numberReadyIssues(project, discovered))
+    expect(numbered.map((issue) => [issue.title, issue.number])).toEqual([
+      ["Root A", 3],
+      ["Root E", 40],
+      ["Selected G", 41],
+      ["Child B", 42],
+    ])
+  })
+
+  test("concurrent passes on one service never hand out a number twice", async () => {
+    await writeProject(NUMBERED)
+    const service = await run(makeService())
+    const discovered = await run(service.listReadyIssues(project))
+    await rm(logPath, { force: true })
+    const [left, right] = await run(
+      Effect.all(
+        [
+          service.numberReadyIssues(project, discovered),
+          service.numberReadyIssues(project, discovered),
+        ],
+        { concurrency: 2 },
+      ),
+    )
+    expect(left?.map((issue) => issue.number)).toEqual([3, 6, 7, 8])
+    expect(right?.map((issue) => issue.number)).toEqual([3, 6, 7, 8])
+    expect(await numberWrites()).toHaveLength(3)
+  })
+
+  test("a duplicate number stops numbering, names both Issues and writes nothing", async () => {
+    await writeProject(
+      NUMBERED.map((issue) =>
+        issue.id === CHILD_C ? { ...issue, number: "3" } : issue,
+      ),
+    )
+    const error = await run(
+      withService((service) => Effect.flip(discoverAndNumber(service))),
+    )
+    expect(error.kind).toBe("duplicate_issue_number")
+    expect(error.message).toContain(displayIdOf(ROOT_A))
+    expect(error.message).toContain(CHILD_C.slice(0, 8))
+    expect(await numberWrites()).toEqual([])
+  })
+
+  test("a number that is not a positive integer stops numbering and is never overwritten", async () => {
+    await writeProject(
+      NUMBERED.map((issue) =>
+        issue.id === ROOT_E ? { ...issue, number: "E-12" } : issue,
+      ),
+    )
+    const error = await run(
+      withService((service) => Effect.flip(discoverAndNumber(service))),
+    )
+    expect(error.kind).toBe("invalid_issue_number")
+    expect(error.message).toContain(displayIdOf(ROOT_E))
+    expect(error.message).toContain('"E-12"')
+    expect(await numberWrites()).toEqual([])
+  })
+
+  test("a project without the rfa-number extension fails with an install hint at the first write", async () => {
+    await writeProject(NUMBERED)
+    await marker("no-number-property")
+    const error = await run(
+      withService((service) => Effect.flip(discoverAndNumber(service))),
+    )
+    expect(error.kind).toBe("property_not_registered")
+    expect(error.message).toContain("rfa-number fp extension")
+    expect(await numberWrites()).toHaveLength(1)
+  })
+
+  test("a write fp reports but does not apply is an error, not a number", async () => {
+    await writeProject(NUMBERED)
+    await marker("silent")
+    const error = await run(
+      withService((service) => Effect.flip(discoverAndNumber(service))),
+    )
+    expect(error.kind).toBe("write_not_applied")
+  })
+})
+
 describe("FpService.checkReadiness", () => {
   test("is ready when the CLI runs and the project resolves", async () => {
     const readiness = await run(
@@ -902,6 +1113,17 @@ describe("FpService.checkReadiness", () => {
       version: "0.25.0",
       remote: { workspaceSlug: "ws-test", projectId: "proj-test" },
     })
+  })
+
+  test("is not ready when the project lacks the rfa-number extension", async () => {
+    await marker("no-number-property")
+    const readiness = await run(
+      withService((service) => service.checkReadiness(directory)),
+    )
+    expect(readiness._tag).toBe("number_property_missing")
+    expect("message" in readiness && readiness.message).toContain(
+      "rfa-number fp extension",
+    )
   })
 
   test("is ready without a remote for a local-only project, so callers can warn that links will not open", async () => {

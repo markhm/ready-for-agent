@@ -21,6 +21,10 @@ export const defaultFpIssueSnapshot: FpIssueSnapshot = {
 export interface FpServiceTestFixture {
   readonly operatorLogin?: string
   readonly issues?: readonly FpIssue[]
+  readonly numberReadyIssues?: (
+    options: FpProjectOptions,
+    issues: readonly FpIssue[],
+  ) => Effect.Effect<readonly FpIssue[], FpRequestError>
   readonly issue?: FpIssueSnapshot
   readonly getIssue?: (
     options: FpProjectOptions,
@@ -43,6 +47,44 @@ export interface FpServiceTestFixture {
   readonly error?: FpRequestError
 }
 
+/**
+ * The default numbering: Issues without a number get the next ones after
+ * the highest in the batch, in order, and references follow them.
+ */
+const numberInMemory = (issues: readonly FpIssue[]): readonly FpIssue[] => {
+  const numbers = new Map<string, number>()
+  let highest = 0
+  for (const issue of issues) {
+    if (issue.number !== null) {
+      numbers.set(issue.nativeId, issue.number)
+      highest = Math.max(highest, issue.number)
+    }
+  }
+  for (const issue of issues) {
+    if (issue.number === null) {
+      highest += 1
+      numbers.set(issue.nativeId, highest)
+    }
+  }
+  const numberOf = (nativeId: string, fallback: number | null) =>
+    numbers.get(nativeId) ?? fallback
+  return issues.map((issue) => ({
+    ...issue,
+    number: numberOf(issue.nativeId, issue.number),
+    parent:
+      issue.parent === null
+        ? null
+        : {
+            ...issue.parent,
+            number: numberOf(issue.parent.nativeId, issue.parent.number),
+          },
+    blockedBy: issue.blockedBy.map((blocker) => ({
+      ...blocker,
+      number: numberOf(blocker.nativeId, blocker.number),
+    })),
+  }))
+}
+
 /** In-memory stand-in for lifecycle and reconciler tests. */
 export const makeFpServiceTest = (
   fixture: FpServiceTestFixture = {},
@@ -60,6 +102,10 @@ export const makeFpServiceTest = (
       ),
     listReadyIssues: () =>
       failOr(() => Effect.succeed([...(fixture.issues ?? [])])),
+    numberReadyIssues: (options, issues) =>
+      fixture.numberReadyIssues !== undefined
+        ? fixture.numberReadyIssues(options, issues)
+        : failOr(() => Effect.succeed(numberInMemory(issues))),
     getIssue: (options, issueId) =>
       fixture.getIssue !== undefined
         ? fixture.getIssue(options, issueId)

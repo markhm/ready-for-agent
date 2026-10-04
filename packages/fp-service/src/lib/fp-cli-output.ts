@@ -191,6 +191,27 @@ export const parseFpProjectList = (
   return projects
 }
 
+const REGISTERED_PROPERTIES_LINE =
+  /^\s*-\s*Other registered properties:\s*(.*?)\s*$/m
+
+/**
+ * The custom properties `fp guide` lists for the project, by key:
+ * `- Other registered properties: labels (multiselect), rfa-number (text)`.
+ * A project with none prints no such line, which is an empty list.
+ */
+export const parseFpRegisteredProperties = (
+  output: string,
+): readonly string[] => {
+  const match = REGISTERED_PROPERTIES_LINE.exec(output)
+  if (match === null) {
+    return []
+  }
+  return (match[1] ?? "")
+    .split(",")
+    .map((entry) => entry.trim().replace(/\s*\([^)]*\)$/, ""))
+    .filter((key) => key !== "")
+}
+
 const REGISTERED_STATUSES_LINE =
   /^\s*-\s*Registered statuses \(in order\):\s*(.+?)\s*$/m
 
@@ -235,8 +256,12 @@ export const classifyFpFailure = (
   | "issue_not_found"
   | "comment_not_found"
   | "invalid_status"
+  | "property_not_registered"
   | "unknown"
 > => {
+  if (/Property is not registered/i.test(combinedOutput)) {
+    return "property_not_registered"
+  }
   if (
     /\.fp directory not found/i.test(combinedOutput) ||
     /not registered with fp/i.test(combinedOutput)

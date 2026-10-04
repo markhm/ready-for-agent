@@ -152,5 +152,7 @@ export type FpReadiness =
       readonly remote: FpProjectRemote | null
     }
   | { readonly _tag: "cli_missing"; readonly message: string }
+  /** The project lacks the `rfa-number` extension (ADR 0074). */
+  | { readonly _tag: "number_property_missing"; readonly message: string }
   | { readonly _tag: "project_not_registered"; readonly message: string }
   | { readonly _tag: "cli_error"; readonly message: string }
