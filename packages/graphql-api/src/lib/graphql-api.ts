@@ -36,6 +36,7 @@ import {
   type MergePolicy,
   RepositoryNotFoundError,
 } from "@ready-for-agent/db-service"
+import { FpService } from "@ready-for-agent/fp-service"
 import type { GitHubService } from "@ready-for-agent/github-service"
 import {
   GitLabService,
@@ -113,6 +114,7 @@ import { preflightRepositoryIntake } from "./repository-intake-preflight.js"
 import { retryWorkItems } from "./repository-retry.js"
 import { toGraphQLError } from "./to-graphql-error.js"
 import { validateAgentModelsAgainstCatalog } from "./validate-agent-models.js"
+import { validateFpProjectSettings } from "./validate-fp-project-settings.js"
 import { projectWorkItemCiRepair } from "./work-item-ci-repair-projection.js"
 import {
   lifecycleLabels,
@@ -190,6 +192,9 @@ type UpdateRepositorySettingsArgs = {
     issueTracker?: string | null
     linearProjectId?: string | null
     linearProjectName?: string | null
+    fpProjectDirectory?: string | null
+    fpInProgressStatus?: string | null
+    fpDoneStatus?: string | null
     linearWorkflowStatuses?:
       | readonly {
           readonly teamId: string
@@ -469,6 +474,7 @@ export type GraphqlServices =
   | GitLabService
   | AzureDevOpsService
   | LinearService
+  | FpService
   | KeymaxxerService
   | ActiveAgentBackend
   | QueueService
@@ -1111,6 +1117,74 @@ export const createGraphqlApi = <R>(
                 const linear = yield* LinearService
                 return yield* linear.listProjectWorkflow(args.projectId)
               }).pipe(Effect.withSpan("graphql-api.linearProjectWorkflow")),
+              context,
+            ),
+          fpProjects: async (
+            _parent: unknown,
+            _args: unknown,
+            context: GraphqlRequestContext,
+          ) =>
+            runGraphql(
+              Effect.gen(function* () {
+                const fp = yield* FpService
+                return yield* fp.listRegisteredProjects().pipe(
+                  Effect.map((projects) => ({
+                    available: true,
+                    message: null,
+                    projects,
+                  })),
+                  Effect.catch((error) =>
+                    Effect.succeed({
+                      available: false,
+                      message: error.message,
+                      projects: [],
+                    }),
+                  ),
+                )
+              }).pipe(Effect.withSpan("graphql-api.fpProjects")),
+              context,
+            ),
+          fpProject: async (
+            _parent: unknown,
+            args: { projectDirectory: string },
+            context: GraphqlRequestContext,
+          ) =>
+            runGraphql(
+              Effect.gen(function* () {
+                const fp = yield* FpService
+                const readiness = yield* fp.checkReadiness(
+                  args.projectDirectory,
+                )
+                if (readiness._tag !== "ready") {
+                  return {
+                    ready: false,
+                    message: readiness.message,
+                    version: null,
+                    workspaceSlug: null,
+                    statuses: [],
+                  }
+                }
+                return yield* fp
+                  .listProjectStatuses(args.projectDirectory)
+                  .pipe(
+                    Effect.map((statuses) => ({
+                      ready: true,
+                      message: null,
+                      version: readiness.version,
+                      workspaceSlug: readiness.remote?.workspaceSlug ?? null,
+                      statuses,
+                    })),
+                    Effect.catch((error) =>
+                      Effect.succeed({
+                        ready: false,
+                        message: error.message,
+                        version: readiness.version,
+                        workspaceSlug: readiness.remote?.workspaceSlug ?? null,
+                        statuses: [],
+                      }),
+                    ),
+                  )
+              }).pipe(Effect.withSpan("graphql-api.fpProject")),
               context,
             ),
           models: async (
@@ -1991,6 +2065,31 @@ export const createGraphqlApi = <R>(
                 const resolvedIdentity = identityChanging
                   ? yield* verifyRepositoryIdentity(nextIdentity)
                   : nextIdentity
+                // fp settings are checked against the fp CLI before, and
+                // outside, the config coordination: the CLI is slow, and a
+                // folder or status fp does not register is refused for that
+                // reason even before storage applies the tracker's
+                // availability. An unrecognized tracker is left to the
+                // supported-Issue-Tracker refusal below.
+                const nextIssueTracker =
+                  args.input.issueTracker ?? repository.issueTracker
+                if (isIssueTracker(nextIssueTracker)) {
+                  yield* validateFpProjectSettings({
+                    issueTracker: nextIssueTracker,
+                    fpProjectDirectory:
+                      args.input.fpProjectDirectory === undefined
+                        ? repository.fpProjectDirectory
+                        : args.input.fpProjectDirectory,
+                    fpInProgressStatus:
+                      args.input.fpInProgressStatus === undefined
+                        ? repository.fpInProgressStatus
+                        : args.input.fpInProgressStatus,
+                    fpDoneStatus:
+                      args.input.fpDoneStatus === undefined
+                        ? repository.fpDoneStatus
+                        : args.input.fpDoneStatus,
+                  })
+                }
                 // Coordinate with Work Item creation when the effective backend
                 // may change so Implement Now cannot capture a pre-activate id.
                 const updated = yield* active.withConfigCoordination(
@@ -2082,6 +2181,15 @@ export const createGraphqlApi = <R>(
                         : {}),
                       ...(args.input.linearProjectName !== undefined
                         ? { linearProjectName: args.input.linearProjectName }
+                        : {}),
+                      ...(args.input.fpProjectDirectory !== undefined
+                        ? { fpProjectDirectory: args.input.fpProjectDirectory }
+                        : {}),
+                      ...(args.input.fpInProgressStatus !== undefined
+                        ? { fpInProgressStatus: args.input.fpInProgressStatus }
+                        : {}),
+                      ...(args.input.fpDoneStatus !== undefined
+                        ? { fpDoneStatus: args.input.fpDoneStatus }
                         : {}),
                       ...(args.input.linearWorkflowStatuses !== undefined &&
                       args.input.linearWorkflowStatuses !== null

@@ -83,6 +83,12 @@ export const RepositoryRecord = Schema.Struct({
   linearProjectId: Schema.NullOr(Schema.String),
   linearProjectName: Schema.NullOr(Schema.String),
   linearWorkflowStatuses: Schema.Array(LinearTeamWorkflowSelection),
+  /** Registered fp project folder when Issue Tracker is fp. */
+  fpProjectDirectory: Schema.NullOr(Schema.String),
+  /** fp status set when implementation starts. */
+  fpInProgressStatus: Schema.NullOr(Schema.String),
+  /** fp status set when the Issue completes. */
+  fpDoneStatus: Schema.NullOr(Schema.String),
   issuesReconciledAt: Schema.NullOr(Schema.Date),
 })
 export type RepositoryRecord = typeof RepositoryRecord.Type
@@ -231,6 +237,9 @@ export const UpdateRepositorySettingsInput = Schema.Struct({
   linearWorkflowStatuses: Schema.optionalKey(
     Schema.Array(LinearTeamWorkflowSelection),
   ),
+  fpProjectDirectory: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  fpInProgressStatus: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  fpDoneStatus: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /**
    * Selected CI Gate Definitions. Omitted leaves stored selections unchanged.
    * Empty array clears every selection and disables the Repository CI Gate.
@@ -364,6 +373,9 @@ export const RepositorySqlRow = Schema.Struct({
   linearProjectId: Schema.NullOr(Schema.String),
   linearProjectName: Schema.NullOr(Schema.String),
   linearWorkflowStatuses: Schema.String,
+  fpProjectDirectory: Schema.NullOr(Schema.String),
+  fpInProgressStatus: Schema.NullOr(Schema.String),
+  fpDoneStatus: Schema.NullOr(Schema.String),
   issuesReconciledAt: Schema.NullOr(Schema.DateFromMillis),
 }).pipe(
   Schema.encodeKeys({
@@ -386,6 +398,9 @@ export const RepositorySqlRow = Schema.Struct({
     linearProjectId: "linear_project_id",
     linearProjectName: "linear_project_name",
     linearWorkflowStatuses: "linear_workflow_statuses",
+    fpProjectDirectory: "fp_project_directory",
+    fpInProgressStatus: "fp_in_progress_status",
+    fpDoneStatus: "fp_done_status",
     issuesReconciledAt: "issues_reconciled_at",
   }),
 )
@@ -558,6 +573,9 @@ export const RepositorySettingsSqlRow = Schema.Struct({
   linearProjectId: Schema.NullOr(Schema.String),
   linearProjectName: Schema.NullOr(Schema.String),
   linearWorkflowStatuses: Schema.String,
+  fpProjectDirectory: Schema.NullOr(Schema.String),
+  fpInProgressStatus: Schema.NullOr(Schema.String),
+  fpDoneStatus: Schema.NullOr(Schema.String),
 })
 export type RepositorySettingsSqlRow = typeof RepositorySettingsSqlRow.Type
 

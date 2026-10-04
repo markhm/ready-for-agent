@@ -25,6 +25,7 @@ import { Claude, ClaudeSessionTelemetryLive } from "@ready-for-agent/claude"
 import { Codex, CodexSessionTelemetryLive } from "@ready-for-agent/codex"
 import { DatabaseLive } from "@ready-for-agent/db"
 import { DbService, DbServiceLive } from "@ready-for-agent/db-service"
+import { FpServiceLive } from "@ready-for-agent/fp-service"
 import { createGraphqlApi } from "@ready-for-agent/graphql-api"
 import { Grok, GrokSessionTelemetryLive } from "@ready-for-agent/grok"
 import { IssueReconcilerLive } from "@ready-for-agent/issue-reconciler"
@@ -171,6 +172,9 @@ export const createApplication = async (
           workspaceRoot: toolCwd,
           environment,
         }).pipe(Layer.provide(keymaxxerLayer), Layer.provide(platformLayer))
+  // fp runs as the operator's own fp login on this machine: no credential,
+  // no Keymaxxer, no helper process.
+  const fpLayer = FpServiceLive.pipe(Layer.provide(platformLayer))
   const reconcilerLayer = IssueReconcilerLive.pipe(
     Layer.provideMerge(databaseLayer),
     Layer.provideMerge(githubLayer),
@@ -266,6 +270,7 @@ export const createApplication = async (
           keymaxxerLayer,
           gitlabLayer,
           linearLayer,
+          fpLayer,
           activeLayer,
           lifecycleLayer,
           localGitLayer,
@@ -279,6 +284,7 @@ export const createApplication = async (
           keymaxxerLayer,
           gitlabLayer,
           linearLayer,
+          fpLayer,
           activeLayer,
           lifecycleLayer,
           localGitLayer,

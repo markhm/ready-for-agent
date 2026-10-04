@@ -41,6 +41,7 @@ export type IssueTrackerAvailability = SelectableAvailability | NotSelectable
 export type IssueTrackerSettings =
   | { readonly kind: "none" }
   | { readonly kind: "linear_project_mapping" }
+  | { readonly kind: "fp_project" }
 
 /**
  * Credential that Issue Polling needs before it may start.
@@ -180,7 +181,7 @@ export const ISSUE_TRACKER_DESCRIPTIONS = {
       kind: "not_selectable",
       message: "fp is not yet available as an Issue Tracker",
     },
-    settings: NOT_IMPLEMENTED,
+    settings: { kind: "fp_project" },
     credential: { kind: "none" },
     issueIdentity: { kind: "native_id" },
     presentation: NOT_IMPLEMENTED,

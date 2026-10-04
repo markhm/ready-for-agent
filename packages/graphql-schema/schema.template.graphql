@@ -73,6 +73,17 @@ type Query {
   """
   linearProjectWorkflow(projectId: ID!): [LinearTeamWorkflow!]!
   """
+  fp projects registered on the Harness machine (`fp project list`).
+  When fp cannot be read, available is false with a message and projects is
+  empty rather than the query failing.
+  """
+  fpProjects: FpProjectList!
+  """
+  Readiness, remote workspace and registered statuses of one fp project
+  folder. A folder fp cannot use reports ready false with a message.
+  """
+  fpProject(projectDirectory: String!): FpProjectDetails!
+  """
   Agent Models available from the Active Agent Backend, each with optional
   Thinking Levels. Empty thinkingLevels means the model has no Thinking Levels.
   Empty when the backend is unavailable.
@@ -760,6 +771,38 @@ type Repository {
   Per-team In Progress and Done statuses for Linear close-out.
   """
   linearWorkflowStatuses: [LinearTeamWorkflowSelection!]!
+  """
+  Registered fp project folder when Issue Tracker is fp.
+  """
+  fpProjectDirectory: String
+  """
+  fp statuses set when implementation starts and when the Issue completes.
+  """
+  fpInProgressStatus: String
+  fpDoneStatus: String
+}
+
+type FpProjectList {
+  available: Boolean!
+  message: String
+  projects: [FpRegisteredProject!]!
+}
+
+type FpRegisteredProject {
+  name: String!
+  path: String!
+  """
+  fp marks a project whose folder no longer exists as orphaned.
+  """
+  orphaned: Boolean!
+}
+
+type FpProjectDetails {
+  ready: Boolean!
+  message: String
+  version: String
+  workspaceSlug: String
+  statuses: [String!]!
 }
 
 type LinearCredential {
@@ -1365,6 +1408,9 @@ input UpdateRepositorySettingsInput {
   linearProjectId: String
   linearProjectName: String
   linearWorkflowStatuses: [LinearTeamWorkflowSelectionInput!]
+  fpProjectDirectory: String
+  fpInProgressStatus: String
+  fpDoneStatus: String
 }
 
 type Mutation {

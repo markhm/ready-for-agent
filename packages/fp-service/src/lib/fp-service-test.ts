@@ -1,5 +1,6 @@
 import { Effect, Layer } from "effect"
 import type { FpRequestError } from "./errors.js"
+import type { FpRegisteredProject } from "./fp-cli-output.js"
 import { FpService } from "./fp-service.js"
 import type {
   FpIssue,
@@ -26,6 +27,8 @@ export interface FpServiceTestFixture {
     issueId: string,
   ) => Effect.Effect<FpIssueSnapshot, FpRequestError>
   readonly readiness?: FpReadiness
+  readonly registeredProjects?: readonly FpRegisteredProject[]
+  readonly projectStatuses?: readonly string[]
   readonly updateIssueStatus?: (
     options: FpProjectOptions,
     issueId: string,
@@ -61,6 +64,14 @@ export const makeFpServiceTest = (
       fixture.getIssue !== undefined
         ? fixture.getIssue(options, issueId)
         : failOr(() => Effect.succeed(fixture.issue ?? defaultFpIssueSnapshot)),
+    listRegisteredProjects: () =>
+      failOr(() => Effect.succeed([...(fixture.registeredProjects ?? [])])),
+    listProjectStatuses: () =>
+      failOr(() =>
+        Effect.succeed([
+          ...(fixture.projectStatuses ?? ["todo", "in-progress", "done"]),
+        ]),
+      ),
     checkReadiness: () =>
       Effect.succeed(
         fixture.readiness ?? {

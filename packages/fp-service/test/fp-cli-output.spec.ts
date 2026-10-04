@@ -5,7 +5,9 @@ import {
   parseFpCommentList,
   parseFpIssueList,
   parseFpIssueShow,
+  parseFpProjectList,
   parseFpProjectRemote,
+  parseFpRegisteredStatuses,
   parseFpVersion,
 } from "../src/lib/fp-cli-output.js"
 import { describe, expect, test } from "bun:test"
@@ -255,5 +257,93 @@ describe("fp comment list parsing", () => {
 
   test("an Issue without comments parses to an empty list", () => {
     expect(parseFpCommentList('{"comments":[]}')).toEqual([])
+  })
+})
+
+// Captured from fp 0.25.0 (d818046) on 2026-09-26.
+const PROJECT_LIST_OUTPUT = [
+  "",
+  "Registered projects:",
+  "",
+  "  maintainability-cloud",
+  "    Path:    /Users/op/git/maintainability-cloud",
+  "    Storage: /Users/op/.fiberplane/projects/maintainability-cloud-4ab7f7fd/",
+  "",
+  "  market-analysis (orphaned)",
+  "    Path:    /Users/op/git/markhm/market-analysis",
+  "    Storage: /Users/op/.fiberplane/projects/market-analysis-52d0d938/",
+  "",
+  "  ready-for-agent",
+  "    Path:    /Users/op/git/berenddeboer/ready-for-agent",
+  "    Storage: /Users/op/.fiberplane/projects/ready-for-agent-276de401/",
+  "",
+].join("\n")
+
+describe("parseFpProjectList", () => {
+  test("reads each registered project's name, folder and orphaned mark", () => {
+    expect(parseFpProjectList(PROJECT_LIST_OUTPUT)).toEqual([
+      {
+        name: "maintainability-cloud",
+        path: "/Users/op/git/maintainability-cloud",
+        orphaned: false,
+      },
+      {
+        name: "market-analysis",
+        path: "/Users/op/git/markhm/market-analysis",
+        orphaned: true,
+      },
+      {
+        name: "ready-for-agent",
+        path: "/Users/op/git/berenddeboer/ready-for-agent",
+        orphaned: false,
+      },
+    ])
+  })
+
+  test("an empty registry is an empty list", () => {
+    expect(parseFpProjectList("\nRegistered projects:\n\n")).toEqual([])
+  })
+
+  test("output without the header is not a project list", () => {
+    expect(() => parseFpProjectList("Unknown argument: list\n")).toThrow()
+  })
+})
+
+// Captured from fp 0.25.0 (d818046) on 2026-09-26, in the MC project and in
+// a folder outside any project.
+const GUIDE_OUTPUT = [
+  "## Project context",
+  "- Prefix: MC",
+  "- Registered statuses (in order): todo, selected, in-progress, done, deferred, rejected",
+  "  - Default for new issues: todo",
+  '  - Counts as "current": selected, in-progress, done, deferred  [auto]',
+  "- Other registered properties: labels (multiselect), workstation (select)",
+  "- Loaded extensions: labels, workflow",
+  "",
+].join("\n")
+const GUIDE_OUTSIDE_PROJECT = [
+  "## Project context",
+  "- Not in an fp project. Run `fp init` first.",
+  "",
+].join("\n")
+
+describe("parseFpRegisteredStatuses", () => {
+  test("reads the registered statuses in fp's order", () => {
+    expect(parseFpRegisteredStatuses(GUIDE_OUTPUT)).toEqual([
+      "todo",
+      "selected",
+      "in-progress",
+      "done",
+      "deferred",
+      "rejected",
+    ])
+  })
+
+  test("outside a project there are no statuses", () => {
+    expect(parseFpRegisteredStatuses(GUIDE_OUTSIDE_PROJECT)).toBeNull()
+  })
+
+  test("output with neither is unreadable", () => {
+    expect(() => parseFpRegisteredStatuses("## Something else\n")).toThrow()
   })
 })

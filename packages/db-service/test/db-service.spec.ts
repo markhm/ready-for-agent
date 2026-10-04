@@ -2176,6 +2176,60 @@ describe("DbService", () => {
         }),
       ))
 
+    it("reads the fp project settings back on the Repository", () =>
+      runTest(
+        Effect.gen(function* () {
+          const db = yield* DbService
+          const sql = yield* SqlClient.SqlClient
+          const repo = yield* db.addRepository(sampleInput)
+          expect(repo.fpProjectDirectory).toBeNull()
+          expect(repo.fpInProgressStatus).toBeNull()
+          expect(repo.fpDoneStatus).toBeNull()
+
+          yield* sql.unsafe(
+            `UPDATE repository
+             SET issue_tracker = 'fp',
+                 fp_project_directory = '/work/widgets',
+                 fp_in_progress_status = 'in-progress',
+                 fp_done_status = 'done'
+             WHERE id = ?`,
+            [repo.id],
+          )
+
+          const stored = (yield* db.listRepositories).find(
+            (r) => r.id === repo.id,
+          )
+          expect(stored?.issueTracker).toBe("fp")
+          expect(stored?.fpProjectDirectory).toBe("/work/widgets")
+          expect(stored?.fpInProgressStatus).toBe("in-progress")
+          expect(stored?.fpDoneStatus).toBe("done")
+        }),
+      ))
+
+    it("clears leftover fp settings when the Repository uses another tracker", () =>
+      runTest(
+        Effect.gen(function* () {
+          const db = yield* DbService
+          const sql = yield* SqlClient.SqlClient
+          const repo = yield* db.addRepository(sampleInput)
+          yield* sql.unsafe(
+            `UPDATE repository
+             SET fp_project_directory = '/work/widgets',
+                 fp_in_progress_status = 'in-progress',
+                 fp_done_status = 'done'
+             WHERE id = ?`,
+            [repo.id],
+          )
+
+          const saved = yield* db.updateRepositorySettings(
+            settingsInput(repo.id, { issueTracker: "github" }),
+          )
+          expect(saved.fpProjectDirectory).toBeNull()
+          expect(saved.fpInProgressStatus).toBeNull()
+          expect(saved.fpDoneStatus).toBeNull()
+        }),
+      ))
+
     it("rejects Linear without a mapped project or team statuses", () =>
       runTest(
         Effect.gen(function* () {

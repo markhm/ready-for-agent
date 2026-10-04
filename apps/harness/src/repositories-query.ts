@@ -124,6 +124,9 @@ export type Repository = {
   linearProjectId: string | null
   linearProjectName: string | null
   linearWorkflowStatuses: readonly LinearTeamWorkflowSelection[]
+  fpProjectDirectory: string | null
+  fpInProgressStatus: string | null
+  fpDoneStatus: string | null
   issuesReconciledAt: string | null
   blockingUnfinishedWorkItemCount: number
   credential: RepositoryCredential
@@ -166,6 +169,9 @@ export const repositoriesQuery = {
           doneStateId: true,
           doneStateName: true,
         },
+        fpProjectDirectory: true,
+        fpInProgressStatus: true,
+        fpDoneStatus: true,
         selectedCiGateDefinitions: {
           identity: true,
           displayLabel: true,

@@ -23,6 +23,7 @@ import {
   RepositoryIdentityChangeBlockedError,
   RepositoryNotFoundError,
 } from "./errors.js"
+import { checkFpProjectSettings } from "./fp-project-settings.js"
 import {
   type AddRepositoryInput,
   type BackendModelPrefs,
@@ -361,6 +362,7 @@ const repositorySelectColumns = `id, forge, issue_tracker, forge_host, project_p
              guaranteed_min_concurrent_agent_turns,
              include_all_issue_authors, wait_for_ready_for_review_checks,
              linear_project_id, linear_project_name, linear_workflow_statuses,
+             fp_project_directory, fp_in_progress_status, fp_done_status,
              issues_reconciled_at`
 
 const issueSelectColumns = `id, repository_id, issue_number, issue_tracker,
@@ -422,6 +424,9 @@ const toRepositoryRecord = (row: RepositorySqlRow): RepositoryRecord =>
     linearWorkflowStatuses: parseLinearWorkflowStatuses(
       row.linearWorkflowStatuses,
     ),
+    fpProjectDirectory: row.fpProjectDirectory,
+    fpInProgressStatus: row.fpInProgressStatus,
+    fpDoneStatus: row.fpDoneStatus,
     issuesReconciledAt: row.issuesReconciledAt,
   })
 
@@ -1421,7 +1426,10 @@ export const DbServiceLive = Layer.effect(
                         guaranteed_min_concurrent_agent_turns AS guaranteedMinConcurrentAgentTurns,
                         linear_project_id AS linearProjectId,
                         linear_project_name AS linearProjectName,
-                        linear_workflow_statuses AS linearWorkflowStatuses
+                        linear_workflow_statuses AS linearWorkflowStatuses,
+                        fp_project_directory AS fpProjectDirectory,
+                        fp_in_progress_status AS fpInProgressStatus,
+                        fp_done_status AS fpDoneStatus
                  FROM repository WHERE id = ?`,
                 [input.repositoryId],
               )
@@ -1495,14 +1503,50 @@ export const DbServiceLive = Layer.effect(
               input.linearWorkflowStatuses === undefined
                 ? existingLinearWorkflowStatuses
                 : input.linearWorkflowStatuses
+            const trimmedOrNull = (value: string | null): string | null =>
+              value === null || value.trim() === "" ? null : value.trim()
+            let nextFpProjectDirectory = trimmedOrNull(
+              input.fpProjectDirectory === undefined
+                ? existing.fpProjectDirectory
+                : input.fpProjectDirectory,
+            )
+            let nextFpInProgressStatus = trimmedOrNull(
+              input.fpInProgressStatus === undefined
+                ? existing.fpInProgressStatus
+                : input.fpInProgressStatus,
+            )
+            let nextFpDoneStatus = trimmedOrNull(
+              input.fpDoneStatus === undefined
+                ? existing.fpDoneStatus
+                : input.fpDoneStatus,
+            )
             const settings = trackerDescription.settings
             if (settings.kind === "not_implemented") {
               return behaviourNotImplemented(nextIssueTracker, "settings")
             }
+            // Settings of a tracker the Repository no longer uses are
+            // cleared, so switching back starts from a fresh choice.
             if (settings.kind !== "linear_project_mapping") {
               nextLinearProjectId = null
               nextLinearProjectName = null
               nextLinearWorkflowStatuses = []
+            }
+            if (settings.kind !== "fp_project") {
+              nextFpProjectDirectory = null
+              nextFpInProgressStatus = null
+              nextFpDoneStatus = null
+            }
+            if (settings.kind === "fp_project") {
+              yield* checkFpProjectSettings(
+                sql,
+                {
+                  repositoryId: input.repositoryId,
+                  fpProjectDirectory: nextFpProjectDirectory,
+                  fpInProgressStatus: nextFpInProgressStatus,
+                  fpDoneStatus: nextFpDoneStatus,
+                },
+                toDatabaseError,
+              )
             }
             if (settings.kind === "linear_project_mapping") {
               if (nextLinearProjectId === null) {
@@ -1689,6 +1733,9 @@ export const DbServiceLive = Layer.effect(
                  linear_project_id = ?,
                  linear_project_name = ?,
                  linear_workflow_statuses = ?,
+                 fp_project_directory = ?,
+                 fp_in_progress_status = ?,
+                 fp_done_status = ?,
                  updated_at = ?
              WHERE id = ?
              RETURNING ${repositorySelectColumns}`,
@@ -1711,6 +1758,9 @@ export const DbServiceLive = Layer.effect(
                   nextLinearProjectId,
                   nextLinearProjectName,
                   JSON.stringify(nextLinearWorkflowStatuses),
+                  nextFpProjectDirectory,
+                  nextFpInProgressStatus,
+                  nextFpDoneStatus,
                   now,
                   input.repositoryId,
                 ],

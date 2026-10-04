@@ -2,6 +2,8 @@
 status: proposed
 amends:
   - 0070
+amended-by:
+  - 0074
 ---
 
 # Each Issue Tracker kind describes its own behaviour in one place

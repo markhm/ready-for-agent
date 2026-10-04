@@ -63,8 +63,8 @@ describe("Issue Tracker descriptions", () => {
     })
     expect(fp.credential).toEqual({ kind: "none" })
     expect(fp.issueIdentity).toEqual({ kind: "native_id" })
+    expect(fp.settings).toEqual({ kind: "fp_project" })
     for (const behaviour of [
-      fp.settings,
       fp.presentation,
       fp.pullRequestReference,
       fp.afterConfirmedMerge,

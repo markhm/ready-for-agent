@@ -39,6 +39,9 @@ export const makeRepositoryRecord = (
     linearProjectId: null,
     linearProjectName: null,
     linearWorkflowStatuses: [],
+    fpProjectDirectory: null,
+    fpInProgressStatus: null,
+    fpDoneStatus: null,
     issuesReconciledAt: null,
     ...rest,
   }

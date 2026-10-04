@@ -35,6 +35,7 @@ import {
   makeRepositoryRecord,
   stubDbServiceLayer,
 } from "@ready-for-agent/db-service/test"
+import { makeFpServiceTest } from "@ready-for-agent/fp-service"
 import {
   GitHubService,
   type GitHubServiceShape,
@@ -1109,6 +1110,7 @@ describe("Job worker", () => {
               defaultGitlabLayer,
               defaultAzureDevOpsLayer,
               defaultLinearLayer,
+              makeFpServiceTest(),
               localGit,
               directoryPicker,
             ),

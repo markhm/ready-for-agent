@@ -117,6 +117,77 @@ export const parseFpProjectRemote = (
   return { workspaceSlug: remote.workspaceSlug, projectId: remote.projectId }
 }
 
+/** One fp project registered on this machine. */
+export interface FpRegisteredProject {
+  readonly name: string
+  readonly path: string
+  /** fp marks a project whose folder no longer exists as orphaned. */
+  readonly orphaned: boolean
+}
+
+const PROJECT_NAME_LINE = /^ {2}(\S.*?)( \(orphaned\))?\s*$/
+const PROJECT_PATH_LINE = /^ {4}Path:\s+(.+?)\s*$/
+
+/**
+ * `fp project list` has no JSON mode (0.25.0). After a `Registered
+ * projects:` header, each project is a block: the name indented two spaces
+ * (with ` (orphaned)` when its folder is gone), then `Path:` and `Storage:`
+ * indented four. Output without the header is not a project list.
+ */
+export const parseFpProjectList = (
+  stdout: string,
+): readonly FpRegisteredProject[] => {
+  const lines = stdout.split(/\r?\n/)
+  const header = lines.findIndex(
+    (line) => line.trim() === "Registered projects:",
+  )
+  if (header === -1) {
+    throw new Error("fp project list output has no Registered projects header")
+  }
+  const projects: FpRegisteredProject[] = []
+  let current: { name: string; orphaned: boolean } | null = null
+  for (const line of lines.slice(header + 1)) {
+    const path = PROJECT_PATH_LINE.exec(line)
+    if (path !== null) {
+      if (current !== null) {
+        projects.push({ ...current, path: path[1] ?? "" })
+        current = null
+      }
+      continue
+    }
+    const name = PROJECT_NAME_LINE.exec(line)
+    if (name !== null) {
+      current = { name: name[1] ?? "", orphaned: name[2] !== undefined }
+    }
+  }
+  return projects
+}
+
+const REGISTERED_STATUSES_LINE =
+  /^\s*-\s*Registered statuses \(in order\):\s*(.+?)\s*$/m
+
+/**
+ * `fp guide` is the only place fp 0.25.0 lists a project's registered
+ * statuses: `- Registered statuses (in order): todo, in-progress, done`
+ * under `## Project context`. Outside a project it says `Not in an fp
+ * project` instead, with exit code 0; that is null here.
+ */
+export const parseFpRegisteredStatuses = (
+  stdout: string,
+): readonly string[] | null => {
+  const match = REGISTERED_STATUSES_LINE.exec(stdout)
+  if (match === null) {
+    if (/Not in an fp project/i.test(stdout)) {
+      return null
+    }
+    throw new Error("fp guide output lists no registered statuses")
+  }
+  return (match[1] ?? "")
+    .split(",")
+    .map((status) => status.trim())
+    .filter((status) => status !== "")
+}
+
 /** `fp --version` prints `0.25.0 (d818046)`. */
 export const parseFpVersion = (stdout: string): string | null => {
   const match = /(\d+\.\d+\.\d+)/.exec(stdout)
