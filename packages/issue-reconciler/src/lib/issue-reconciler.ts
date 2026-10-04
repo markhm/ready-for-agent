@@ -156,6 +156,10 @@ const matches = (
     remote.parent === null ? null : referenceIdentity(remote.parent)
   return (
     local.issueTracker === issueTracker &&
+    // A Forge or Linear Issue never changes number; an fp Issue's
+    // harness-allocated number can be corrected in fp (ADR 0074), and the
+    // store must follow it.
+    local.issueNumber === remote.number &&
     local.nativeId === identity.nativeId &&
     local.displayId === identity.displayId &&
     local.title === remote.title &&
@@ -274,10 +278,17 @@ export const IssueReconcilerLive = Layer.effect(
               // have used: one freed by deleting an Issue in fp would
               // otherwise attach that bookkeeping to a new Issue.
               const floor = yield* db.highestIssueNumber(repository.id)
+              // The numbers the store holds name the Issue to keep when fp
+              // reports a duplicate.
+              const held = new Map(
+                localIssues
+                  .filter((issue) => issue.issueTracker === "fp")
+                  .map((issue) => [issue.nativeId, issue.issueNumber]),
+              )
               const numbered = yield* fp.numberReadyIssues(
                 project,
                 discovered,
-                floor,
+                { floor, held },
               )
               return {
                 remoteIssues: fpReadyLabeledIssues(numbered),

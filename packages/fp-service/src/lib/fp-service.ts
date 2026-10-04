@@ -10,6 +10,12 @@ import type {
 
 export type FpServiceError = FpRequestError
 
+/** What the harness already knows when numbering (ADR 0074). */
+export interface FpNumberingContext {
+  readonly floor?: number
+  readonly held?: ReadonlyMap<string, number>
+}
+
 /**
  * fp (Fiberplane's local-first tracker) as an Issue Tracker. Every operation
  * runs the fp CLI with the project directory as working directory: the CLI
@@ -62,9 +68,10 @@ export interface FpServiceShape {
   /**
    * Give each of these Ready Issues without a number the next number: one
    * more than the highest `rfa-number` in its fp project, and never at or
-   * below `floor` (the highest number the harness has used for the
+   * below `harness.floor` (the highest number the harness has used for the
    * Repository, so a number freed by deleting an Issue in fp is not handed
-   * out again). Written to fp and verified by reading it back (ADR 0074).
+   * out again). `harness.held` maps native ids to the numbers the harness
+   * stores for them; a duplicate report names the Issue to keep from it. Written to fp and verified by reading it back (ADR 0074).
    * Returns the Issues with every number filled, references to them
    * included. One numbering pass runs at a time per service; a pass fails,
    * writing nothing, when the project holds a duplicate number or a value
@@ -73,7 +80,7 @@ export interface FpServiceShape {
   readonly numberReadyIssues: (
     options: FpProjectOptions,
     issues: readonly FpIssue[],
-    floor?: number,
+    harness?: FpNumberingContext,
   ) => Effect.Effect<readonly FpIssue[], FpServiceError>
   /**
    * Move one Issue to a registered status. An Issue already in that status,

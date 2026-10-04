@@ -191,6 +191,12 @@ export const parseFpProjectList = (
   return projects
 }
 
+const PREFIX_LINE = /^\s*-\s*Prefix:\s*(\S+)\s*$/m
+
+/** The project's display-id prefix from `fp guide`: `- Prefix: MC`. */
+export const parseFpProjectPrefix = (output: string): string | null =>
+  PREFIX_LINE.exec(output)?.[1] ?? null
+
 const REGISTERED_PROPERTIES_LINE =
   /^\s*-\s*Other registered properties:\s*(.*?)\s*$/m
 

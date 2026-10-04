@@ -17,12 +17,17 @@ import {
   parseFpIssueList,
   parseFpIssueShow,
   parseFpProjectList,
+  parseFpProjectPrefix,
   parseFpProjectRemote,
   parseFpRegisteredProperties,
   parseFpRegisteredStatuses,
   parseFpVersion,
 } from "./fp-cli-output.js"
-import { FpService, type FpServiceShape } from "./fp-service.js"
+import {
+  type FpNumberingContext,
+  FpService,
+  type FpServiceShape,
+} from "./fp-service.js"
 import {
   FP_CLI_COMMAND,
   FP_READY_LABEL,
@@ -580,8 +585,9 @@ export const makeFpService = (
     function* (
       projectOptions: FpProjectOptions,
       issues: readonly FpIssue[],
-      floor = 0,
+      harness: FpNumberingContext = {},
     ) {
+      const floor = harness.floor ?? 0
       const cwd = projectOptions.projectDirectory
       // A fresh list, not the discovery poll's: the numbers in fp are the
       // record, and another write may have landed since.
@@ -595,7 +601,7 @@ export const makeFpService = (
       // An Issue outside the Ready set is named as fp displays it,
       // `<prefix>-<shortId>`, with the prefix a Ready Issue's display id
       // carries before its own short id.
-      const prefix = (() => {
+      const prefixFromReady = (() => {
         for (const issue of issues) {
           const listed = all.find(
             (candidate) => candidate.id === issue.nativeId,
@@ -607,14 +613,27 @@ export const makeFpService = (
         }
         return null
       })()
-      const nameOf = (listed: FpListIssue) =>
-        issues.find((issue) => issue.nativeId === listed.id)?.displayId ??
-        (prefix === null ? listed.shortId : `${prefix}-${listed.shortId}`)
+      // Without a Ready Issue to read it from, fp guide names the prefix;
+      // asked only when an Issue must be named in an error.
+      const namer = Effect.gen(function* () {
+        const prefix =
+          prefixFromReady ??
+          (yield* runFp(cwd, ["guide"]).pipe(
+            Effect.map((result) =>
+              parseFpProjectPrefix(combinedOutput(result)),
+            ),
+            Effect.orElseSucceed(() => null),
+          ))
+        return (listed: FpListIssue) =>
+          issues.find((issue) => issue.nativeId === listed.id)?.displayId ??
+          (prefix === null ? listed.shortId : `${prefix}-${listed.shortId}`)
+      })
       const numbers = new Map<string, number>()
       const holders = new Map<number, FpListIssue>()
       for (const listed of all) {
         const value = fpIssueNumber(listed)
         if (value.kind === "invalid") {
+          const nameOf = yield* namer
           return yield* requestError(
             `fp issue ${nameOf(listed)} has ${FP_NUMBER_PROPERTY} "${value.raw}", which is not a positive integer; correct or clear it in fp.`,
             { kind: "invalid_issue_number" },
@@ -623,8 +642,15 @@ export const makeFpService = (
         if (value.kind === "number") {
           const holder = holders.get(value.number)
           if (holder !== undefined) {
+            const nameOf = yield* namer
+            const kept = [holder, listed].find(
+              (candidate) => harness.held?.get(candidate.id) === value.number,
+            )
+            const other = kept === holder ? listed : holder
             return yield* requestError(
-              `fp issues ${nameOf(holder)} and ${nameOf(listed)} both have ${FP_NUMBER_PROPERTY} ${value.number}; clear one of them in fp.`,
+              kept === undefined
+                ? `fp issues ${nameOf(holder)} and ${nameOf(listed)} both have ${FP_NUMBER_PROPERTY} ${value.number}; clear one of them in fp.`
+                : `fp issues ${nameOf(holder)} and ${nameOf(listed)} both have ${FP_NUMBER_PROPERTY} ${value.number}; the harness knows ${nameOf(kept)} by that number, so clear ${nameOf(other)}'s in fp.`,
               { kind: "duplicate_issue_number" },
             )
           }

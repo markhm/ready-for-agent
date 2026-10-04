@@ -1007,7 +1007,7 @@ describe("FpService.numberReadyIssues", () => {
     const issues = await run(
       withService((service) =>
         Effect.flatMap(service.listReadyIssues(project), (ready) =>
-          service.numberReadyIssues(project, ready, 20),
+          service.numberReadyIssues(project, ready, { floor: 20 }),
         ),
       ),
     )
@@ -1078,6 +1078,47 @@ describe("FpService.numberReadyIssues", () => {
     // C is not Ready, and is still named as fp displays it.
     expect(error.message).toContain(displayIdOf(CHILD_C))
     expect(await numberWrites()).toEqual([])
+  })
+
+  test("a duplicate report says which Issue the harness knows by that number", async () => {
+    await writeProject(
+      NUMBERED.map((issue) =>
+        issue.id === CHILD_C ? { ...issue, number: "3" } : issue,
+      ),
+    )
+    const error = await run(
+      withService((service) =>
+        Effect.flip(
+          Effect.flatMap(service.listReadyIssues(project), (ready) =>
+            service.numberReadyIssues(project, ready, {
+              held: new Map([[ROOT_A, 3]]),
+            }),
+          ),
+        ),
+      ),
+    )
+    expect(error.message).toContain(
+      `the harness knows ${displayIdOf(ROOT_A)} by that number, so clear ${displayIdOf(CHILD_C)}'s in fp`,
+    )
+  })
+
+  test("with no Ready Issue to read the prefix from, a duplicate is still named as fp displays it", async () => {
+    await writeProject([
+      fixture(CHILD_C, { title: "Child C", status: "todo", number: "7" }),
+      fixture(DONE_D, { title: "Done D", status: "done", number: "7" }),
+    ])
+    const error = await run(
+      withService((service) =>
+        Effect.flip(
+          Effect.flatMap(service.listReadyIssues(project), (ready) =>
+            service.numberReadyIssues(project, ready),
+          ),
+        ),
+      ),
+    )
+    expect(error.kind).toBe("duplicate_issue_number")
+    expect(error.message).toContain(displayIdOf(CHILD_C))
+    expect(error.message).toContain(displayIdOf(DONE_D))
   })
 
   test("a number that is not a positive integer stops numbering and is never overwritten", async () => {

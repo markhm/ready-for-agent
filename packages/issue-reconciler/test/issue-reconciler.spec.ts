@@ -18,6 +18,7 @@ import type { ReadyLabeledIssue } from "@ready-for-agent/forge-contract"
 import {
   type FpIssue,
   FpNotConfiguredError,
+  type FpNumberingContext,
   type FpProjectOptions,
   FpRequestError,
   type FpService,
@@ -1748,7 +1749,7 @@ describe("IssueReconciler", () => {
     const db = makeDbFixture({ issues: [], highestIssueNumber: 3 })
     const numberedWith: {
       readonly options: FpProjectOptions
-      readonly floor: number | undefined
+      readonly harness: FpNumberingContext | undefined
     }[] = []
     const parent = fpIssue("parentaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
       number: 4,
@@ -1787,7 +1788,7 @@ describe("IssueReconciler", () => {
               projectDirectory: "/work/mc-platform",
               closedStatuses: ["done", "rejected"],
             },
-            floor: 3,
+            harness: { floor: 3, held: new Map() },
           },
         ])
         const byNativeId = new Map(
@@ -1818,8 +1819,8 @@ describe("IssueReconciler", () => {
       db,
       {
         issues: [parent, child],
-        numberReadyIssues: (options, issues, floor) => {
-          numberedWith.push({ options, floor })
+        numberReadyIssues: (options, issues, harness) => {
+          numberedWith.push({ options, harness })
           return Effect.succeed(
             issues.map((issue) =>
               issue.nativeId === child.nativeId
@@ -1841,25 +1842,66 @@ describe("IssueReconciler", () => {
 
   it("closes fp Issues in the Repository's own Done status, as well as fp's done and rejected", () => {
     const db = makeDbFixture({ issues: [] })
-    const seen: FpProjectOptions[] = []
+    const listed: FpProjectOptions[] = []
+    const numbered: FpProjectOptions[] = []
     return runFp(
       Effect.gen(function* () {
         const reconciler = yield* IssueReconciler
         yield* reconciler.reconcile(fpTracked({ fpDoneStatus: "shipped" }))
-        expect(seen.map((options) => options.closedStatuses)).toEqual([
+        // Discovery is where closed statuses decide state and blockers.
+        expect(listed.map((options) => options.closedStatuses)).toEqual([
+          ["done", "rejected", "shipped"],
+        ])
+        expect(numbered.map((options) => options.closedStatuses)).toEqual([
           ["done", "rejected", "shipped"],
         ])
       }),
       db,
       {
-        issues: [fpIssue("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")],
+        listReadyIssues: (options) => {
+          listed.push(options)
+          return Effect.succeed([fpIssue("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")])
+        },
         numberReadyIssues: (options, issues) => {
-          seen.push(options)
+          numbered.push(options)
           return Effect.succeed(
             issues.map((issue) => ({ ...issue, number: 1 })),
           )
         },
       },
+    )
+  })
+
+  it("follows an fp Issue whose number was corrected in fp, and hands the store's numbers to numbering", () => {
+    const db = makeDbFixture({ issues: [] })
+    const nativeId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    let number = 5
+    const heldSeen: (ReadonlyMap<string, number> | undefined)[] = []
+    const fixture: FpServiceTestFixture = {
+      issues: [fpIssue(nativeId)],
+      numberReadyIssues: (_options, issues, harness) => {
+        heldSeen.push(harness?.held)
+        return Effect.succeed(issues.map((issue) => ({ ...issue, number })))
+      },
+    }
+    return runFp(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        const first = yield* reconciler.reconcile(fpTracked())
+        expect(first.inserted).toBe(1)
+        number = 6
+        const second = yield* reconciler.reconcile(fpTracked())
+        expect(second.updated).toBe(1)
+        expect(
+          db.actions.filter((action) => action.startsWith("store:")),
+        ).toEqual(["store:5", "store:6"])
+        expect(heldSeen.map((held) => held?.get(nativeId))).toEqual([
+          undefined,
+          5,
+        ])
+      }),
+      db,
+      fixture,
     )
   })
 

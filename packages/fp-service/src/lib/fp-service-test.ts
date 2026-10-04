@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import type { FpRequestError } from "./errors.js"
 import type { FpRegisteredProject } from "./fp-cli-output.js"
-import { FpService } from "./fp-service.js"
+import { type FpNumberingContext, FpService } from "./fp-service.js"
 import type {
   FpIssue,
   FpIssueSnapshot,
@@ -21,10 +21,13 @@ export const defaultFpIssueSnapshot: FpIssueSnapshot = {
 export interface FpServiceTestFixture {
   readonly operatorLogin?: string
   readonly issues?: readonly FpIssue[]
+  readonly listReadyIssues?: (
+    options: FpProjectOptions,
+  ) => Effect.Effect<readonly FpIssue[], FpRequestError>
   readonly numberReadyIssues?: (
     options: FpProjectOptions,
     issues: readonly FpIssue[],
-    floor?: number,
+    harness?: FpNumberingContext,
   ) => Effect.Effect<readonly FpIssue[], FpRequestError>
   readonly issue?: FpIssueSnapshot
   readonly getIssue?: (
@@ -104,12 +107,16 @@ export const makeFpServiceTest = (
       failOr(() =>
         Effect.succeed(fixture.operatorLogin ?? "fp-user@example.com"),
       ),
-    listReadyIssues: () =>
-      failOr(() => Effect.succeed([...(fixture.issues ?? [])])),
-    numberReadyIssues: (options, issues, floor) =>
+    listReadyIssues: (options) =>
+      fixture.listReadyIssues !== undefined
+        ? fixture.listReadyIssues(options)
+        : failOr(() => Effect.succeed([...(fixture.issues ?? [])])),
+    numberReadyIssues: (options, issues, harness) =>
       fixture.numberReadyIssues !== undefined
-        ? fixture.numberReadyIssues(options, issues, floor)
-        : failOr(() => Effect.succeed(numberInMemory(issues, floor ?? 0))),
+        ? fixture.numberReadyIssues(options, issues, harness)
+        : failOr(() =>
+            Effect.succeed(numberInMemory(issues, harness?.floor ?? 0)),
+          ),
     getIssue: (options, issueId) =>
       fixture.getIssue !== undefined
         ? fixture.getIssue(options, issueId)

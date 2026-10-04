@@ -7,6 +7,7 @@ import {
   parseFpIssueList,
   parseFpIssueShow,
   parseFpProjectList,
+  parseFpProjectPrefix,
   parseFpProjectRemote,
   parseFpRegisteredProperties,
   parseFpRegisteredStatuses,
@@ -457,6 +458,16 @@ const GUIDE_OUTSIDE_PROJECT = [
   "- Not in an fp project. Run `fp init` first.",
   "",
 ].join("\n")
+
+describe("parseFpProjectPrefix", () => {
+  test("reads the display-id prefix", () => {
+    expect(parseFpProjectPrefix(GUIDE_OUTPUT)).toBe("MC")
+  })
+
+  test("outside a project there is none", () => {
+    expect(parseFpProjectPrefix(GUIDE_OUTSIDE_PROJECT)).toBeNull()
+  })
+})
 
 describe("parseFpRegisteredProperties", () => {
   test("reads the property keys without their kinds", () => {
