@@ -23,6 +23,7 @@ import {
   RepositoryIdentityChangeBlockedError,
   RepositoryNotFoundError,
 } from "./errors.js"
+import { checkFpProjectSettings } from "./fp-project-settings.js"
 import {
   type AddRepositoryInput,
   type BackendModelPrefs,
@@ -1536,40 +1537,16 @@ export const DbServiceLive = Layer.effect(
               nextFpDoneStatus = null
             }
             if (settings.kind === "fp_project") {
-              if (nextFpProjectDirectory === null) {
-                return yield* new InvalidRepositorySettingsError({
-                  field: "fpProjectDirectory",
-                  message: "Select the fp project mapped to this Repository",
-                })
-              }
-              if (
-                nextFpInProgressStatus === null ||
-                nextFpDoneStatus === null
-              ) {
-                return yield* new InvalidRepositorySettingsError({
-                  field: "fpWorkflowStatuses",
-                  message:
-                    "Choose In Progress and Done statuses for the fp project",
-                })
-              }
-              const mappedFpRows = (yield* sql
-                .unsafe(
-                  `SELECT id FROM repository
-                   WHERE fp_project_directory = ?
-                     AND id <> ?
-                   LIMIT 1`,
-                  [nextFpProjectDirectory, input.repositoryId],
-                )
-                .pipe(Effect.mapError(toDatabaseError))) as readonly {
-                readonly id: string
-              }[]
-              if (mappedFpRows.length > 0) {
-                return yield* new InvalidRepositorySettingsError({
-                  field: "fpProjectDirectory",
-                  message:
-                    "That fp project is already mapped to another Repository",
-                })
-              }
+              yield* checkFpProjectSettings(
+                sql,
+                {
+                  repositoryId: input.repositoryId,
+                  fpProjectDirectory: nextFpProjectDirectory,
+                  fpInProgressStatus: nextFpInProgressStatus,
+                  fpDoneStatus: nextFpDoneStatus,
+                },
+                toDatabaseError,
+              )
             }
             if (settings.kind === "linear_project_mapping") {
               if (nextLinearProjectId === null) {

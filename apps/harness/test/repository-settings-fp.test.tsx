@@ -235,6 +235,20 @@ describe("Repository settings dialog wiring for fp", () => {
     }
   })
 
+  test("each settings session starts from the stored fp settings, not an abandoned draft", () => {
+    const start = source.indexOf("prepareSettingsSessionRef.current = () => {")
+    expect(start).toBeGreaterThan(-1)
+    const prepare = source.slice(start, source.indexOf("\n  }\n", start))
+    expect(prepare).toContain("setLinearProjectId(")
+    for (const reset of [
+      'setFpProjectDirectory(repository.fpProjectDirectory ?? "")',
+      'setFpInProgressStatus(repository.fpInProgressStatus ?? "")',
+      'setFpDoneStatus(repository.fpDoneStatus ?? "")',
+    ]) {
+      expect(prepare).toContain(reset)
+    }
+  })
+
   test("reads the fp settings back from the Repository and from the save", () => {
     for (const field of [
       "fpProjectDirectory: true",

@@ -1836,7 +1836,25 @@ describe("GraphQL API", () => {
     })
   })
 
-  test("passes fp project settings through to the Repository", async () => {
+  test("forwards fp settings the fp CLI registers to storage for an fp Repository", async () => {
+    await runtime.dispose()
+    runtime = makeRuntime(
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {
+        registeredProjects: [
+          { name: "widgets", path: "/work/widgets", orphaned: false },
+        ],
+      },
+    )
     const saved = await createGraphqlApi(runtime).fetch(
       graphqlRequest({
         query: `mutation UpdateRepositorySettings($input: UpdateRepositorySettingsInput!) {
@@ -1857,6 +1875,7 @@ describe("GraphQL API", () => {
             mergePolicy: "OFF",
             includeAllIssueAuthors: false,
             waitForReadyForReviewChecks: true,
+            issueTracker: "fp",
             fpProjectDirectory: "/work/widgets",
             fpInProgressStatus: "in-progress",
             fpDoneStatus: "done",
@@ -2016,6 +2035,55 @@ describe("GraphQL API", () => {
       ).errors,
     ).toBeUndefined()
     expect(settingsCalls).toHaveLength(2)
+  })
+
+  test("never consults fp for a Repository on another Issue Tracker", async () => {
+    await runtime.dispose()
+    runtime = makeRuntime(
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+      {
+        error: new FpRequestError({
+          message: "fp is not on the PATH",
+          kind: "spawn_failed",
+        }),
+      },
+    )
+    const saved = await createGraphqlApi(runtime).fetch(
+      graphqlRequest({
+        query: `mutation UpdateRepositorySettings($input: UpdateRepositorySettingsInput!) {
+          updateRepositorySettings(input: $input) { issueTracker }
+        }`,
+        variables: {
+          input: {
+            repositoryId: repository.id,
+            paused: false,
+            defaultModel: null,
+            defaultThinkingLevel: null,
+            reviewModel: null,
+            reviewThinkingLevel: null,
+            mergePolicy: "OFF",
+            includeAllIssueAuthors: false,
+            waitForReadyForReviewChecks: true,
+            issueTracker: "github",
+            fpProjectDirectory: "/work/unknown",
+            fpInProgressStatus: "doing",
+            fpDoneStatus: "closed",
+          },
+        },
+      }),
+    )
+    expect(await saved.json()).toEqual({
+      data: { updateRepositorySettings: { issueTracker: "github" } },
+    })
   })
 
   test("refuses fp settings when the fp CLI cannot be read", async () => {

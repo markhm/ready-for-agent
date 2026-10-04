@@ -1404,6 +1404,9 @@ function RepositoryCard({
     setLinearProjectId(repository.linearProjectId ?? "")
     setLinearWorkflowStatuses([...repository.linearWorkflowStatuses])
     setLinearTokenCreated(false)
+    setFpProjectDirectory(repository.fpProjectDirectory ?? "")
+    setFpInProgressStatus(repository.fpInProgressStatus ?? "")
+    setFpDoneStatus(repository.fpDoneStatus ?? "")
     setWaitForReadyForReviewChecks(repository.waitForReadyForReviewChecks)
     setSelectedCiGateIdentities(
       repository.selectedCiGateDefinitions.map(
