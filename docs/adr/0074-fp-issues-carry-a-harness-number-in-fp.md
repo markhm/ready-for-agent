@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 amends:
   - 0073
 ---
@@ -26,7 +26,9 @@ fp itself:
 - **Where it lives.** An fp extension property `rfa-number` (a text
   property holding a positive integer) on the Issue. Each fp project used
   as an Issue Tracker registers the property with a small extension; a
-  project without it is refused by preflight and by the first write.
+  project without it is refused by preflight and by the first write. The
+  extension's validator also accepts the empty value, because fp clears a
+  property by writing it empty; an empty value counts as no number.
 - **Who allocates it.** The harness, during discovery: the first time a
   Ready-labeled fp Issue without a number is seen, it gets the next free
   number in its fp project (one more than the highest `rfa-number` in the
