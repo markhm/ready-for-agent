@@ -9,6 +9,11 @@ export const usesLinearProjectMapping = (issueTracker: string): boolean =>
   isIssueTracker(issueTracker) &&
   describeIssueTracker(issueTracker).settings.kind === "linear_project_mapping"
 
+/** Whether the selected Issue Tracker maps an fp project in settings. */
+export const usesFpProjectMapping = (issueTracker: string): boolean =>
+  isIssueTracker(issueTracker) &&
+  describeIssueTracker(issueTracker).settings.kind === "fp_project"
+
 /**
  * Whether a Repository hosted on this Forge may keep this Issue Tracker in
  * its own right rather than as the hosting Forge's tracker.

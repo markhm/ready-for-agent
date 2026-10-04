@@ -2,6 +2,7 @@ import { ISSUE_TRACKERS } from "@ready-for-agent/lifecycle-model"
 import {
   isTrackerOnlyKindSelectableFor,
   offersParentImplementAll,
+  usesFpProjectMapping,
   usesLinearProjectMapping,
 } from "../src/issue-tracker-settings.js"
 import { describe, expect, test } from "bun:test"
@@ -12,6 +13,12 @@ describe("Repository settings Issue Tracker facts", () => {
   test("shows the Linear project mapping only for Linear", () => {
     for (const value of values) {
       expect(usesLinearProjectMapping(value)).toBe(value === "linear")
+    }
+  })
+
+  test("shows the fp project mapping only for fp", () => {
+    for (const value of values) {
+      expect(usesFpProjectMapping(value)).toBe(value === "fp")
     }
   })
 

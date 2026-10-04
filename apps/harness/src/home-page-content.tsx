@@ -63,6 +63,7 @@ import {
 import {
   isTrackerOnlyKindSelectableFor,
   offersParentImplementAll,
+  usesFpProjectMapping,
   usesLinearProjectMapping,
 } from "./issue-tracker-settings.js"
 import {
@@ -119,6 +120,14 @@ import {
   RepositorySettingsCiGateSection,
   ciGateCatalogViewFromQuery,
 } from "./repository-settings-ci-gate.js"
+import {
+  FP_DEFAULT_DONE_STATUS,
+  FP_DEFAULT_IN_PROGRESS_STATUS,
+  RepositorySettingsFpSection,
+  effectiveFpStatus,
+  fpProjectDetailsViewFromQuery,
+  fpProjectsViewFromQuery,
+} from "./repository-settings-fp.js"
 import {
   isRepositorySettingsPathFor,
   markRepositorySettingsOpenedFromInApp,
@@ -1046,6 +1055,69 @@ function RepositoryCard({
     })
   }, [linearWorkflow.data])
 
+  const [fpProjectDirectory, setFpProjectDirectory] = useState(
+    repository.fpProjectDirectory ?? "",
+  )
+  const [fpInProgressStatus, setFpInProgressStatus] = useState(
+    repository.fpInProgressStatus ?? "",
+  )
+  const [fpDoneStatus, setFpDoneStatus] = useState(
+    repository.fpDoneStatus ?? "",
+  )
+  const fpEnabled = usesFpProjectMapping(issueTracker)
+  const fpProjects = useQuery({
+    queryKey: ["fpProjects"],
+    enabled: dialogOpen && fpEnabled,
+    queryFn: async () => {
+      const result = await graphql.query({
+        fpProjects: {
+          available: true,
+          message: true,
+          projects: { name: true, path: true, orphaned: true },
+        },
+      })
+      return result.fpProjects
+    },
+  })
+  const fpProject = useQuery({
+    queryKey: ["fpProject", fpProjectDirectory],
+    enabled: dialogOpen && fpEnabled && fpProjectDirectory !== "",
+    queryFn: async () => {
+      const result = await graphql.query({
+        fpProject: {
+          __args: { projectDirectory: fpProjectDirectory },
+          ready: true,
+          message: true,
+          version: true,
+          workspaceSlug: true,
+          statuses: true,
+        },
+      })
+      return result.fpProject
+    },
+  })
+  const fpProjectsView = fpProjectsViewFromQuery({
+    pending: fpProjects.isPending,
+    data: fpProjects.data,
+    error: fpProjects.error,
+  })
+  const fpDetailsView = fpProjectDetailsViewFromQuery({
+    projectDirectory: fpProjectDirectory,
+    pending: fpProject.isPending,
+    data: fpProject.data,
+    error: fpProject.error,
+  })
+  const fpEffectiveInProgressStatus = effectiveFpStatus(
+    fpDetailsView,
+    fpInProgressStatus,
+    FP_DEFAULT_IN_PROGRESS_STATUS,
+  )
+  const fpEffectiveDoneStatus = effectiveFpStatus(
+    fpDetailsView,
+    fpDoneStatus,
+    FP_DEFAULT_DONE_STATUS,
+  )
+
   const addLinearApiKey = useMutation({
     mutationFn: async () => {
       const result = await graphql.mutation({
@@ -1151,6 +1223,9 @@ function RepositoryCard({
         doneStateId: string
         doneStateName: string
       }[]
+      fpProjectDirectory?: string | null
+      fpInProgressStatus?: string | null
+      fpDoneStatus?: string | null
       selectedCiGateDefinitionIdentities: string[]
     }) => {
       const result = await graphql.mutation({
@@ -1184,6 +1259,9 @@ function RepositoryCard({
             doneStateId: true,
             doneStateName: true,
           },
+          fpProjectDirectory: true,
+          fpInProgressStatus: true,
+          fpDoneStatus: true,
           selectedCiGateDefinitions: {
             identity: true,
             displayLabel: true,
@@ -1888,6 +1966,18 @@ function RepositoryCard({
         forge === "github" && usesLinearProjectMapping(issueTracker)
           ? [...linearWorkflowStatuses]
           : [],
+      fpProjectDirectory:
+        forge === "github" && usesFpProjectMapping(issueTracker)
+          ? fpProjectDirectory
+          : null,
+      fpInProgressStatus:
+        forge === "github" && usesFpProjectMapping(issueTracker)
+          ? fpEffectiveInProgressStatus
+          : null,
+      fpDoneStatus:
+        forge === "github" && usesFpProjectMapping(issueTracker)
+          ? fpEffectiveDoneStatus
+          : null,
       selectedCiGateDefinitionIdentities: [...selectedCiGateIdentities],
     })
   }
@@ -2322,6 +2412,7 @@ function RepositoryCard({
                         setIssueTracker(next)
                         setLinearProjectId("")
                         setLinearWorkflowStatuses([])
+                        setFpProjectDirectory("")
                       } else if (
                         !isTrackerOnlyKindSelectableFor(next, issueTracker)
                       ) {
@@ -2600,6 +2691,22 @@ function RepositoryCard({
                         )
                       })}
                     </>
+                  )}
+                  {usesFpProjectMapping(issueTracker) && (
+                    <RepositorySettingsFpSection
+                      projects={fpProjectsView}
+                      projectDirectory={fpProjectDirectory}
+                      onProjectDirectoryChange={(directory) => {
+                        setFpProjectDirectory(directory)
+                        setFpInProgressStatus("")
+                        setFpDoneStatus("")
+                      }}
+                      details={fpDetailsView}
+                      inProgressStatus={fpEffectiveInProgressStatus}
+                      doneStatus={fpEffectiveDoneStatus}
+                      onInProgressStatusChange={setFpInProgressStatus}
+                      onDoneStatusChange={setFpDoneStatus}
+                    />
                   )}
                 </section>
               )}
