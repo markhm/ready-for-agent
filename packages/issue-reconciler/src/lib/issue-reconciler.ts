@@ -17,6 +17,11 @@ import {
   resolveForgeIssueOperations,
 } from "@ready-for-agent/forge-contract"
 import {
+  FpNotConfiguredError,
+  type FpRequestError,
+  FpService,
+} from "@ready-for-agent/fp-service"
+import {
   type GitHubOperationOptions,
   type GitHubRepositoryUnavailableError,
   type GitHubRequestError,
@@ -42,6 +47,7 @@ import {
   type LinearRequestError,
   LinearService,
 } from "@ready-for-agent/linear-service"
+import { fpReadyLabeledIssues } from "./fp-ready-issues.js"
 
 export const CompetingPullRequestIdentity = Schema.Struct({
   repository: Schema.String,
@@ -102,6 +108,8 @@ export type ReconciliationError =
   | AzureDevOpsNotImplementedError
   | LinearRequestError
   | LinearNotConfiguredError
+  | FpRequestError
+  | FpNotConfiguredError
   | ReconciliationMutationError
   | RepositoryNotFoundError
   | DatabaseError
@@ -181,6 +189,7 @@ export const IssueReconcilerLive = Layer.effect(
     const gitlab = yield* GitLabService
     const azureDevOps = yield* AzureDevOpsService
     const linear = yield* LinearService
+    const fp = yield* FpService
 
     const reconcile = Effect.fn("IssueReconciler.reconcile")(function* (
       repository: RepositoryRecord,
@@ -225,7 +234,36 @@ export const IssueReconcilerLive = Layer.effect(
               }
             })
           case "fp":
-            return notSupported(issueTracker)
+            return Effect.gen(function* () {
+              const projectDirectory =
+                repository.fpProjectDirectory?.trim() ?? ""
+              if (projectDirectory === "") {
+                return yield* new FpNotConfiguredError({
+                  repositoryId: repository.id,
+                  message:
+                    "Select an fp project in Repository settings before refreshing Issues",
+                })
+              }
+              const project = { projectDirectory }
+              // fp authors are email addresses; the operator is the
+              // authenticated fp account.
+              const authorScope = repository.includeAllIssueAuthors
+                ? { includeAll: true as const }
+                : {
+                    includeAll: false as const,
+                    operatorLogin:
+                      yield* fp.getAuthenticatedUserLogin(projectDirectory),
+                  }
+              // Numbering runs on the whole Ready set, before author scope
+              // and relevance, so the Ready parent of a relevant child
+              // always has its number (ADR 0074).
+              const discovered = yield* fp.listReadyIssues(project)
+              const numbered = yield* fp.numberReadyIssues(project, discovered)
+              return {
+                remoteIssues: fpReadyLabeledIssues(numbered),
+                authorScope,
+              }
+            })
           case "github":
           case "gitlab":
           case "azure-devops": {

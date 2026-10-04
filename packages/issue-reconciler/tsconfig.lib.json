@@ -29,6 +29,9 @@
       "path": "../linear-service/tsconfig.lib.json"
     },
     {
+      "path": "../fp-service/tsconfig.lib.json"
+    },
+    {
       "path": "../db-service/tsconfig.lib.json"
     }
   ]

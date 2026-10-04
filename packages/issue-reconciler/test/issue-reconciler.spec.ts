@@ -16,6 +16,15 @@ import {
 } from "@ready-for-agent/db-service/test"
 import type { ReadyLabeledIssue } from "@ready-for-agent/forge-contract"
 import {
+  type FpIssue,
+  FpNotConfiguredError,
+  type FpProjectOptions,
+  FpRequestError,
+  type FpService,
+  type FpServiceTestFixture,
+  makeFpServiceTest,
+} from "@ready-for-agent/fp-service"
+import {
   GitHubRequestError,
   GitHubService,
   type GitHubServiceShape,
@@ -360,6 +369,7 @@ const runReconciliation = <A, E>(
   gitlabLayer: Layer.Layer<GitLabService> = defaultGitLabLayer,
   azureDevOpsLayer: Layer.Layer<AzureDevOpsService> = defaultAzureDevOpsLayer,
   linearLayer: Layer.Layer<LinearService> = defaultLinearLayer,
+  fpLayer: Layer.Layer<FpService> = makeFpServiceTest(),
 ): Promise<A> =>
   Effect.runPromise(
     effect.pipe(
@@ -372,6 +382,7 @@ const runReconciliation = <A, E>(
               gitlabLayer,
               azureDevOpsLayer,
               linearLayer,
+              fpLayer,
             ),
           ),
         ),
@@ -1672,6 +1683,239 @@ describe("IssueReconciler", () => {
       defaultGitLabLayer,
       defaultAzureDevOpsLayer,
       linear,
+    )
+  })
+
+  const fpLink = (nativeId: string) =>
+    `fp://issue?workspace=ws&project=proj&id=${nativeId}`
+
+  const fpIssue = (
+    nativeId: string,
+    overrides: Partial<FpIssue> = {},
+  ): FpIssue => ({
+    nativeId,
+    number: null,
+    displayId: `MC-${nativeId.slice(0, 8)}`,
+    title: `fp ${nativeId}`,
+    body: `Body of ${nativeId}`,
+    url: fpLink(nativeId),
+    createdAt: new Date("2026-10-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-10-01T00:00:00.000Z"),
+    status: "todo",
+    state: "OPEN",
+    author: "operator@example.com",
+    labels: ["ready-for-agent"],
+    parent: null,
+    parentPosition: null,
+    hasChildren: false,
+    hierarchySupported: true,
+    blockedBy: [],
+    ...overrides,
+  })
+
+  const fpTracked = (
+    overrides: Parameters<typeof makeRepositoryRecord>[0] = {},
+  ) =>
+    makeRepositoryRecord({
+      id: "repo-1",
+      forge: "github",
+      issueTracker: "fp",
+      fpProjectDirectory: "/work/mc-platform",
+      fpInProgressStatus: "in-progress",
+      fpDoneStatus: "done",
+      includeAllIssueAuthors: true,
+      ...overrides,
+    })
+
+  const runFp = <A, E>(
+    effect: Effect.Effect<A, E, IssueReconciler>,
+    db: ReturnType<typeof makeDbFixture>,
+    fixture: FpServiceTestFixture,
+  ) =>
+    runReconciliation(
+      effect,
+      db.layer,
+      makeGitHubLayer([remoteIssue(1)], db.actions),
+      defaultGitLabLayer,
+      defaultAzureDevOpsLayer,
+      defaultLinearLayer,
+      makeFpServiceTest(fixture),
+    )
+
+  it("discovers fp Issues with harness-allocated numbers, never the hosting Forge's", () => {
+    const db = makeDbFixture({ issues: [] })
+    const numberedWith: FpProjectOptions[] = []
+    const parent = fpIssue("parentaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+      number: 4,
+      hasChildren: true,
+    })
+    const child = fpIssue("childbbbbbbbbbbbbbbbbbbbbbbbbbbbb", {
+      createdAt: new Date("2026-10-02T00:00:00.000Z"),
+      parent: {
+        nativeId: parent.nativeId,
+        displayId: parent.displayId,
+        url: parent.url,
+        number: null,
+        state: "OPEN",
+        isReadyLabeled: true,
+      },
+      parentPosition: 1,
+      blockedBy: [
+        {
+          nativeId: "blockercccccccccccccccccccccccccc",
+          displayId: "MC-blockerc",
+          url: fpLink("blockercccccccccccccccccccccccccc"),
+          number: null,
+        },
+      ],
+    })
+    return runFp(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        const summary = yield* reconciler.reconcile(fpTracked())
+        expect(summary.inserted).toBe(2)
+        expect(numberedWith).toEqual([
+          { projectDirectory: "/work/mc-platform" },
+        ])
+        const byNativeId = new Map(
+          db.stored.map((issue) => [issue.nativeId, issue]),
+        )
+        const storedParent = byNativeId.get(parent.nativeId)
+        const storedChild = byNativeId.get(child.nativeId)
+        expect(storedParent?.issueTracker).toBe("fp")
+        expect(storedParent?.issueNumber).toBe(4)
+        expect(storedParent?.displayId).toBe(parent.displayId)
+        expect(storedParent?.url).toBe(parent.url)
+        // The in-memory numbering gives the child the next number, and its
+        // parent reference follows it.
+        expect(storedChild?.issueNumber).toBe(5)
+        expect(storedChild?.parent?.issueNumber).toBe(4)
+        expect(storedChild?.parent?.nativeId).toBe(parent.nativeId)
+        // A blocker without a number is stored under the placeholder.
+        expect(
+          storedChild?.blockedBy?.map((blocker) => [
+            blocker.issueNumber,
+            blocker.nativeId,
+          ]),
+        ).toEqual([[1, "blockercccccccccccccccccccccccccc"]])
+        expect(db.actions.some((action) => action.startsWith("github:"))).toBe(
+          false,
+        )
+      }),
+      db,
+      {
+        issues: [parent, child],
+        numberReadyIssues: (options, issues) => {
+          numberedWith.push(options)
+          return Effect.succeed(
+            issues.map((issue) =>
+              issue.nativeId === child.nativeId
+                ? {
+                    ...issue,
+                    number: 5,
+                    parent:
+                      issue.parent === null
+                        ? null
+                        : { ...issue.parent, number: 4 },
+                  }
+                : issue,
+            ),
+          )
+        },
+      },
+    )
+  })
+
+  it("scopes fp Issues to the authenticated fp account's email", () => {
+    const db = makeDbFixture({ issues: [] })
+    return runFp(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        yield* reconciler.reconcile(
+          fpTracked({ includeAllIssueAuthors: false }),
+        )
+        expect(db.stored.map((issue) => issue.nativeId)).toEqual([
+          "ownaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ])
+      }),
+      db,
+      {
+        operatorLogin: "Operator@Example.com",
+        issues: [
+          fpIssue("ownaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
+            author: "operator@example.com",
+          }),
+          fpIssue("otherbbbbbbbbbbbbbbbbbbbbbbbbbbb", {
+            author: "someone@example.com",
+            createdAt: new Date("2026-10-02T00:00:00.000Z"),
+          }),
+        ],
+      },
+    )
+  })
+
+  it("skips an fp Issue numbering left without a number, until the next refresh", () => {
+    const db = makeDbFixture({ issues: [] })
+    return runFp(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        yield* reconciler.reconcile(fpTracked())
+        expect(db.stored.map((issue) => issue.issueNumber)).toEqual([2])
+      }),
+      db,
+      {
+        issues: [
+          fpIssue("goneaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+          fpIssue("keptbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        ],
+        numberReadyIssues: (_options, issues) =>
+          Effect.succeed(
+            issues.map((issue) =>
+              issue.nativeId === "keptbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                ? { ...issue, number: 2 }
+                : issue,
+            ),
+          ),
+      },
+    )
+  })
+
+  it("stores nothing when fp numbering fails", () => {
+    const db = makeDbFixture({ issues: [] })
+    return runFp(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        const error = yield* Effect.flip(reconciler.reconcile(fpTracked()))
+        expect(error).toBeInstanceOf(FpRequestError)
+        expect(error).toMatchObject({ kind: "duplicate_issue_number" })
+        expect(db.stored).toEqual([])
+      }),
+      db,
+      {
+        issues: [fpIssue("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")],
+        numberReadyIssues: () =>
+          Effect.fail(
+            new FpRequestError({
+              message: "fp issues MC-a and MC-b both have rfa-number 3",
+              kind: "duplicate_issue_number",
+            }),
+          ),
+      },
+    )
+  })
+
+  it("fails when fp is selected without a mapped project", () => {
+    const db = makeDbFixture({ issues: [] })
+    return runFp(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        const error = yield* Effect.flip(
+          reconciler.reconcile(fpTracked({ fpProjectDirectory: " " })),
+        )
+        expect(error).toBeInstanceOf(FpNotConfiguredError)
+      }),
+      db,
+      { issues: [fpIssue("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")] },
     )
   })
 

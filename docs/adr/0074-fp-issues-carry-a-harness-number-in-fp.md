@@ -66,6 +66,12 @@ the duplicate risk above.
   build is refused with a request to run `fp update`, rather than read
   slowly: fp updates itself, and the same list also carries the labels
   discovery needs.
+- A parent or blocker that has never been Ready has no number, but stored
+  references need one; it is stored under a placeholder number. Nothing
+  resolves a reference by its number: parents are matched by native id and
+  blockers are only counted, as with Linear's unreadable blockers. A parent
+  that matters, an open Ready-labeled one, is numbered with the Ready set,
+  before author scope and relevance filter it.
 - Moving the numbers between machines relies on fp sync carrying extension
   properties, which is not yet verified.
 - If the maintainer later makes the number optional, the harness stops

@@ -181,6 +181,7 @@ export const createApplication = async (
     Layer.provideMerge(gitlabLayer),
     Layer.provideMerge(azureDevOpsLayer),
     Layer.provideMerge(linearLayer),
+    Layer.provideMerge(fpLayer),
   )
   const queueLayer = SqliteQueueServiceLive.pipe(
     Layer.provideMerge(databaseLayer),
