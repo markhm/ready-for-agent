@@ -5,7 +5,8 @@ import { Schema } from "effect"
  * discovery drop one vanished Issue instead of failing the poll;
  * `invalid_status` and `comment_not_found` come from writes;
  * `write_not_applied` is a write fp reported as done that the read-back
- * did not find.
+ * did not find; `outdated_cli` is an fp build whose output lacks what the
+ * harness needs.
  */
 export const FpFailureKind = Schema.Literals([
   "project_not_registered",
@@ -16,6 +17,7 @@ export const FpFailureKind = Schema.Literals([
   "timeout",
   "spawn_failed",
   "unreadable_output",
+  "outdated_cli",
   "unknown",
 ])
 export type FpFailureKind = typeof FpFailureKind.Type

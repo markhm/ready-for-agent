@@ -10,6 +10,7 @@ import {
   type FpShowIssue,
   classifyFpFailure,
   fpIssueLabels,
+  fpIssueNumber,
   parseFpAuthStatus,
   parseFpCommentList,
   parseFpIssueList,
@@ -378,10 +379,16 @@ export const makeFpService = (
     const stateOf = (status: string) => fpIssueState(status, projectOptions)
     const remote = yield* projectRemote(cwd)
 
-    // One list call gives status, parent, dependencies and updatedAt for
-    // every Issue; hierarchy and blocker facts come from here, never from
-    // extra show calls.
+    // One list call gives status, parent, dependencies, labels, number and
+    // updatedAt for every Issue; eligibility, hierarchy and blocker facts
+    // come from here, never from extra show calls.
     const all = yield* listIssues(cwd)
+    if (all.some((issue) => issue.properties === undefined)) {
+      return yield* requestError(
+        "This fp build lists Issues without their properties, so labels and numbers cannot be read. Run `fp update`.",
+        { kind: "outdated_cli" },
+      )
+    }
     const byId = new Map(all.map((issue) => [issue.id, issue]))
     const childrenOf = new Map<string, FpListIssue[]>()
     for (const issue of all) {
@@ -399,13 +406,13 @@ export const makeFpService = (
     const candidates = all.filter(
       (issue) =>
         stateOf(issue.status) === "OPEN" &&
-        (candidateStatuses === null || candidateStatuses.has(issue.status)),
+        (candidateStatuses === null || candidateStatuses.has(issue.status)) &&
+        fpIssueLabels(issue).includes(readyLabel),
     )
 
-    // Labels are only visible through show; inspect each candidate, cached
-    // by updatedAt so an unchanged Issue costs nothing on the next poll.
-    // Only the labels, title, body and author come from show; parent and
-    // dependencies are taken from this poll's list entry.
+    // Only the display id, title, body and author need show, and only for
+    // the Ready candidates; cached by updatedAt so an unchanged Issue costs
+    // nothing on the next poll. Everything else comes from this poll's list.
     const shown = yield* Effect.forEach(
       candidates,
       (listed) => showCached(cwd, listed),
@@ -419,12 +426,15 @@ export const makeFpService = (
     }
     const ready = candidates.flatMap((listed, index) => {
       const issue = shown[index]
-      return issue !== undefined &&
-        issue !== null &&
-        fpIssueLabels(issue).includes(readyLabel)
-        ? [{ listed, issue }]
-        : []
+      return issue !== undefined && issue !== null ? [{ listed, issue }] : []
     })
+    const numberOf = (listed: FpListIssue | undefined): number | null => {
+      if (listed === undefined) {
+        return null
+      }
+      const number = fpIssueNumber(listed)
+      return number.kind === "number" ? number.number : null
+    }
 
     // A reference to an Issue we did not show (a blocker, an absent parent)
     // gets its display id from the cache when we have shown it before, else
@@ -449,7 +459,12 @@ export const makeFpService = (
         (listed !== undefined && prefix !== null
           ? `${prefix}-${listed.shortId}`
           : nativeId)
-      return { nativeId, displayId, url: fpIssueUrl(remote, nativeId) }
+      return {
+        nativeId,
+        displayId,
+        url: fpIssueUrl(remote, nativeId),
+        number: numberOf(listed),
+      }
     }
 
     const parentFor = Effect.fn("FpService.parentFor")(function* (
@@ -477,8 +492,9 @@ export const makeFpService = (
         nativeId: parentId,
         displayId: shownParent.displayId,
         url: fpIssueUrl(remote, parentId),
+        number: numberOf(listedParent),
         state: stateOf(listedParent.status),
-        isReadyLabeled: fpIssueLabels(shownParent).includes(readyLabel),
+        isReadyLabeled: fpIssueLabels(listedParent).includes(readyLabel),
       }
       const siblings = [...(childrenOf.get(parentId) ?? [])].sort((a, b) =>
         a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
@@ -492,6 +508,7 @@ export const makeFpService = (
       const { parent, parentPosition } = yield* parentFor(listed)
       issues.push({
         nativeId: issue.id,
+        number: numberOf(listed),
         displayId: issue.displayId,
         title: issue.title,
         body: issue.description ?? "",
@@ -501,12 +518,19 @@ export const makeFpService = (
         status: listed.status,
         state: stateOf(listed.status),
         author: issue.author ?? null,
-        labels: fpIssueLabels(issue),
+        labels: fpIssueLabels(listed),
         parent,
         parentPosition,
         hasChildren: (childrenOf.get(issue.id)?.length ?? 0) > 0,
         hierarchySupported: true,
-        blockedBy: (listed.dependencies ?? []).map(referenceFor),
+        // A finished blocker no longer blocks, as on the Forges; one missing
+        // from the list (deleted, foreign) still does.
+        blockedBy: (listed.dependencies ?? [])
+          .filter((blockerId) => {
+            const blocker = byId.get(blockerId)
+            return blocker === undefined || stateOf(blocker.status) === "OPEN"
+          })
+          .map(referenceFor),
       })
     }
     // fp short ids are random letters, so creation order is the meaningful

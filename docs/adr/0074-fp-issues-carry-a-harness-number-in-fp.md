@@ -62,8 +62,10 @@ the duplicate risk above.
   fp Issue without a number. For every other Issue Tracker kind refresh
   stays read-only.
 - Reading every number in one call relies on `fp issue list` including
-  properties (fp CLI build a381766, reported as version 0.25.0). Older
-  builds fall back to one `fp issue show` per candidate.
+  properties (fp CLI build a381766, reported as version 0.25.0). An older
+  build is refused with a request to run `fp update`, rather than read
+  slowly: fp updates itself, and the same list also carries the labels
+  discovery needs.
 - Moving the numbers between machines relies on fp sync carrying extension
   properties, which is not yet verified.
 - If the maintainer later makes the number optional, the harness stops

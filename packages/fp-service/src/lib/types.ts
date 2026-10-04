@@ -74,9 +74,8 @@ export interface FpProjectOptions {
   /** Statuses reported as CLOSED; defaults to `done` and `rejected`. */
   readonly closedStatuses?: readonly string[]
   /**
-   * When set, only Issues in these statuses are inspected for the Ready
-   * label. Narrows the per-Issue `show` cost on large projects; the label
-   * is still required. Unset means every open Issue is a candidate.
+   * When set, only Issues in these statuses are offered, in addition to
+   * carrying the Ready label. Unset means every open Issue is a candidate.
    */
   readonly candidateStatuses?: readonly string[]
 }
@@ -85,6 +84,11 @@ export interface FpIssueReference {
   readonly nativeId: string
   readonly displayId: string
   readonly url: string
+  /**
+   * The harness-allocated number from the Issue's `rfa-number` property
+   * (ADR 0074); null while the Issue has none.
+   */
+  readonly number: number | null
 }
 
 export interface FpIssueParent extends FpIssueReference {
@@ -94,12 +98,14 @@ export interface FpIssueParent extends FpIssueReference {
 
 /**
  * Tracker-native Ready-labeled Issue record. Field names mirror the Forge
- * `ReadyLabeledIssue` so the seam mapping is a spread, except that fp has no
- * integer issue number: that field is the seam's decision, not the adapter's.
+ * `ReadyLabeledIssue` so the seam mapping is a spread. fp has no integer
+ * issue number of its own: `number` is the harness-allocated `rfa-number`
+ * property (ADR 0074), null until the harness has allocated one.
  */
 export interface FpIssue {
   /** fp's 32-character issue id. */
   readonly nativeId: string
+  readonly number: number | null
   /** fp's display id, e.g. `MC-miygcidm`. */
   readonly displayId: string
   readonly title: string

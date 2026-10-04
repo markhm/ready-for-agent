@@ -9,6 +9,13 @@ import type { FpFailureKind } from "./errors.js"
 
 const IsoDate = Schema.String
 
+const FpPropertiesSchema = Schema.NullOr(
+  Schema.Struct({
+    labels: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+    "rfa-number": Schema.optional(Schema.NullOr(Schema.String)),
+  }),
+)
+
 const FpListIssueSchema = Schema.Struct({
   id: Schema.String,
   shortId: Schema.String,
@@ -20,6 +27,8 @@ const FpListIssueSchema = Schema.Struct({
   dependencies: Schema.optional(Schema.Array(Schema.String)),
   createdAt: IsoDate,
   updatedAt: IsoDate,
+  // Absent on fp builds before a381766, which list no properties at all.
+  properties: Schema.optional(FpPropertiesSchema),
 })
 
 /** `fp issue list --format json` wraps the array: `{ "issues": [...] }`. */
@@ -38,13 +47,7 @@ const FpShowIssueSchema = Schema.Struct({
   author: Schema.optional(Schema.NullOr(Schema.String)),
   createdAt: IsoDate,
   updatedAt: IsoDate,
-  properties: Schema.optional(
-    Schema.NullOr(
-      Schema.Struct({
-        labels: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
-      }),
-    ),
-  ),
+  properties: Schema.optional(FpPropertiesSchema),
 })
 
 const FpCommentSchema = Schema.Struct({
@@ -78,8 +81,33 @@ export const parseFpCommentList = (stdout: string): readonly FpComment[] =>
   decodeJson(FpCommentListSchema, stdout).comments
 
 /** Labels live in the `labels` property; absent or null means none. */
-export const fpIssueLabels = (issue: FpShowIssue): readonly string[] =>
-  issue.properties?.labels ?? []
+export const fpIssueLabels = (
+  issue: FpShowIssue | FpListIssue,
+): readonly string[] => issue.properties?.labels ?? []
+
+/** The fp property holding the harness-allocated number (ADR 0074). */
+export const FP_NUMBER_PROPERTY = "rfa-number"
+
+/**
+ * The Issue's `rfa-number`: none when absent or empty (fp clears a property
+ * by writing it empty), a number when it is a positive integer, and invalid
+ * otherwise, so a value the harness did not write is never overwritten.
+ */
+export const fpIssueNumber = (
+  issue: FpShowIssue | FpListIssue,
+):
+  | { readonly kind: "none" }
+  | { readonly kind: "number"; readonly number: number }
+  | { readonly kind: "invalid"; readonly raw: string } => {
+  const raw = issue.properties?.[FP_NUMBER_PROPERTY]
+  if (raw === undefined || raw === null || raw === "") {
+    return { kind: "none" }
+  }
+  const number = Number(raw)
+  return /^[1-9][0-9]*$/.test(raw) && Number.isSafeInteger(number)
+    ? { kind: "number", number }
+    : { kind: "invalid", raw }
+}
 
 const EMAIL_LINE = /^\s*Email:\s*(\S+)\s*$/m
 const NAME_LINE = /^\s*Name:\s*(.+?)\s*$/m
