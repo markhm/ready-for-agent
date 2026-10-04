@@ -2065,6 +2065,31 @@ export const createGraphqlApi = <R>(
                 const resolvedIdentity = identityChanging
                   ? yield* verifyRepositoryIdentity(nextIdentity)
                   : nextIdentity
+                // fp settings are checked against the fp CLI before, and
+                // outside, the config coordination: the CLI is slow, and a
+                // folder or status fp does not register is refused for that
+                // reason even before storage applies the tracker's
+                // availability. An unrecognized tracker is left to the
+                // supported-Issue-Tracker refusal below.
+                const nextIssueTracker =
+                  args.input.issueTracker ?? repository.issueTracker
+                if (isIssueTracker(nextIssueTracker)) {
+                  yield* validateFpProjectSettings({
+                    issueTracker: nextIssueTracker,
+                    fpProjectDirectory:
+                      args.input.fpProjectDirectory === undefined
+                        ? repository.fpProjectDirectory
+                        : args.input.fpProjectDirectory,
+                    fpInProgressStatus:
+                      args.input.fpInProgressStatus === undefined
+                        ? repository.fpInProgressStatus
+                        : args.input.fpInProgressStatus,
+                    fpDoneStatus:
+                      args.input.fpDoneStatus === undefined
+                        ? repository.fpDoneStatus
+                        : args.input.fpDoneStatus,
+                  })
+                }
                 // Coordinate with Work Item creation when the effective backend
                 // may change so Implement Now cannot capture a pre-activate id.
                 const updated = yield* active.withConfigCoordination(
@@ -2115,22 +2140,6 @@ export const createGraphqlApi = <R>(
                           "issueTracker must be a supported Issue Tracker",
                       })
                     }
-                    yield* validateFpProjectSettings({
-                      issueTracker:
-                        args.input.issueTracker ?? repository.issueTracker,
-                      fpProjectDirectory:
-                        args.input.fpProjectDirectory === undefined
-                          ? repository.fpProjectDirectory
-                          : args.input.fpProjectDirectory,
-                      fpInProgressStatus:
-                        args.input.fpInProgressStatus === undefined
-                          ? repository.fpInProgressStatus
-                          : args.input.fpInProgressStatus,
-                      fpDoneStatus:
-                        args.input.fpDoneStatus === undefined
-                          ? repository.fpDoneStatus
-                          : args.input.fpDoneStatus,
-                    })
                     const updated = yield* db.updateRepositorySettings({
                       repositoryId: args.input.repositoryId,
                       ...(args.input.forge === undefined && !identityChanging

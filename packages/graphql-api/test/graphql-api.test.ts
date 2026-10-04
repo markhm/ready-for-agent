@@ -2086,6 +2086,45 @@ describe("GraphQL API", () => {
     })
   })
 
+  test("refuses an unrecognized Issue Tracker without consulting fp", async () => {
+    const result = (await (
+      await createGraphqlApi(runtime).fetch(
+        graphqlRequest({
+          query: `mutation UpdateRepositorySettings($input: UpdateRepositorySettingsInput!) {
+            updateRepositorySettings(input: $input) { issueTracker }
+          }`,
+          variables: {
+            input: {
+              repositoryId: repository.id,
+              paused: false,
+              defaultModel: null,
+              defaultThinkingLevel: null,
+              reviewModel: null,
+              reviewThinkingLevel: null,
+              mergePolicy: "OFF",
+              includeAllIssueAuthors: false,
+              waitForReadyForReviewChecks: true,
+              issueTracker: "jira",
+              fpProjectDirectory: "/work/unknown",
+            },
+          },
+        }),
+      )
+    ).json()) as {
+      errors?: ReadonlyArray<{
+        message?: string
+        extensions?: { code?: string; field?: string }
+      }>
+    }
+    expect(result.errors?.[0]?.message).toBe(
+      "issueTracker must be a supported Issue Tracker",
+    )
+    expect(result.errors?.[0]?.extensions).toEqual({
+      code: "INVALID_REPOSITORY_SETTINGS",
+      field: "issueTracker",
+    })
+  })
+
   test("refuses fp settings when the fp CLI cannot be read", async () => {
     await runtime.dispose()
     runtime = makeRuntime(
