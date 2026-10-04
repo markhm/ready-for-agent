@@ -24,6 +24,7 @@ export interface FpServiceTestFixture {
   readonly numberReadyIssues?: (
     options: FpProjectOptions,
     issues: readonly FpIssue[],
+    floor?: number,
   ) => Effect.Effect<readonly FpIssue[], FpRequestError>
   readonly issue?: FpIssueSnapshot
   readonly getIssue?: (
@@ -49,11 +50,14 @@ export interface FpServiceTestFixture {
 
 /**
  * The default numbering: Issues without a number get the next ones after
- * the highest in the batch, in order, and references follow them.
+ * the highest in the batch or the floor, in order, and references follow.
  */
-const numberInMemory = (issues: readonly FpIssue[]): readonly FpIssue[] => {
+const numberInMemory = (
+  issues: readonly FpIssue[],
+  floor: number,
+): readonly FpIssue[] => {
   const numbers = new Map<string, number>()
-  let highest = 0
+  let highest = floor
   for (const issue of issues) {
     if (issue.number !== null) {
       numbers.set(issue.nativeId, issue.number)
@@ -102,10 +106,10 @@ export const makeFpServiceTest = (
       ),
     listReadyIssues: () =>
       failOr(() => Effect.succeed([...(fixture.issues ?? [])])),
-    numberReadyIssues: (options, issues) =>
+    numberReadyIssues: (options, issues, floor) =>
       fixture.numberReadyIssues !== undefined
-        ? fixture.numberReadyIssues(options, issues)
-        : failOr(() => Effect.succeed(numberInMemory(issues))),
+        ? fixture.numberReadyIssues(options, issues, floor)
+        : failOr(() => Effect.succeed(numberInMemory(issues, floor ?? 0))),
     getIssue: (options, issueId) =>
       fixture.getIssue !== undefined
         ? fixture.getIssue(options, issueId)

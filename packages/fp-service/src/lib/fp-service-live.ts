@@ -577,7 +577,11 @@ export const makeFpService = (
   })
 
   const numberReadyIssues = Effect.fn("FpService.numberReadyIssues")(
-    function* (projectOptions: FpProjectOptions, issues: readonly FpIssue[]) {
+    function* (
+      projectOptions: FpProjectOptions,
+      issues: readonly FpIssue[],
+      floor = 0,
+    ) {
       const cwd = projectOptions.projectDirectory
       // A fresh list, not the discovery poll's: the numbers in fp are the
       // record, and another write may have landed since.
@@ -588,9 +592,24 @@ export const makeFpService = (
           { kind: "outdated_cli" },
         )
       }
+      // An Issue outside the Ready set is named as fp displays it,
+      // `<prefix>-<shortId>`, with the prefix a Ready Issue's display id
+      // carries before its own short id.
+      const prefix = (() => {
+        for (const issue of issues) {
+          const listed = all.find(
+            (candidate) => candidate.id === issue.nativeId,
+          )
+          const suffix = listed === undefined ? null : `-${listed.shortId}`
+          if (suffix !== null && issue.displayId.endsWith(suffix)) {
+            return issue.displayId.slice(0, -suffix.length)
+          }
+        }
+        return null
+      })()
       const nameOf = (listed: FpListIssue) =>
         issues.find((issue) => issue.nativeId === listed.id)?.displayId ??
-        listed.shortId
+        (prefix === null ? listed.shortId : `${prefix}-${listed.shortId}`)
       const numbers = new Map<string, number>()
       const holders = new Map<number, FpListIssue>()
       for (const listed of all) {
@@ -613,7 +632,7 @@ export const makeFpService = (
           numbers.set(listed.id, value.number)
         }
       }
-      let highest = Math.max(0, ...holders.keys())
+      let highest = Math.max(floor, ...holders.keys())
       const listedIds = new Set(all.map((listed) => listed.id))
       for (const issue of issues) {
         // An Issue that left the project since discovery is not numbered.

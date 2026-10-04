@@ -141,6 +141,7 @@ interface DbFixtureOptions {
     readonly issueNumber: number
   }[]
   readonly failStoreNumber?: number
+  readonly highestIssueNumber?: number
   readonly listError?: DatabaseError
   readonly markError?: DatabaseError
 }
@@ -161,6 +162,7 @@ const makeDbFixture = (options: DbFixtureOptions) => {
       Effect.succeed(options.workItemPullRequests ?? []),
     listUnfinishedCreatePrWorkItems: () =>
       Effect.succeed(options.unfinishedCreatePrWorkItems ?? []),
+    highestIssueNumber: () => Effect.succeed(options.highestIssueNumber ?? 0),
     storeIssue: (input) => {
       actions.push(`store:${input.issueNumber}`)
       if (input.issueNumber === options.failStoreNumber) {
@@ -1743,8 +1745,11 @@ describe("IssueReconciler", () => {
     )
 
   it("discovers fp Issues with harness-allocated numbers, never the hosting Forge's", () => {
-    const db = makeDbFixture({ issues: [] })
-    const numberedWith: FpProjectOptions[] = []
+    const db = makeDbFixture({ issues: [], highestIssueNumber: 3 })
+    const numberedWith: {
+      readonly options: FpProjectOptions
+      readonly floor: number | undefined
+    }[] = []
     const parent = fpIssue("parentaaaaaaaaaaaaaaaaaaaaaaaaaaa", {
       number: 4,
       hasChildren: true,
@@ -1774,8 +1779,16 @@ describe("IssueReconciler", () => {
         const reconciler = yield* IssueReconciler
         const summary = yield* reconciler.reconcile(fpTracked())
         expect(summary.inserted).toBe(2)
+        // The Repository's Done status is "done", already one of fp's own
+        // closed statuses; the floor is the store's highest issue number.
         expect(numberedWith).toEqual([
-          { projectDirectory: "/work/mc-platform" },
+          {
+            options: {
+              projectDirectory: "/work/mc-platform",
+              closedStatuses: ["done", "rejected"],
+            },
+            floor: 3,
+          },
         ])
         const byNativeId = new Map(
           db.stored.map((issue) => [issue.nativeId, issue]),
@@ -1786,8 +1799,8 @@ describe("IssueReconciler", () => {
         expect(storedParent?.issueNumber).toBe(4)
         expect(storedParent?.displayId).toBe(parent.displayId)
         expect(storedParent?.url).toBe(parent.url)
-        // The in-memory numbering gives the child the next number, and its
-        // parent reference follows it.
+        // This test's numbering stub gives the child 5 and its parent
+        // reference 4; the mapping must carry both into the store.
         expect(storedChild?.issueNumber).toBe(5)
         expect(storedChild?.parent?.issueNumber).toBe(4)
         expect(storedChild?.parent?.nativeId).toBe(parent.nativeId)
@@ -1805,8 +1818,8 @@ describe("IssueReconciler", () => {
       db,
       {
         issues: [parent, child],
-        numberReadyIssues: (options, issues) => {
-          numberedWith.push(options)
+        numberReadyIssues: (options, issues, floor) => {
+          numberedWith.push({ options, floor })
           return Effect.succeed(
             issues.map((issue) =>
               issue.nativeId === child.nativeId
@@ -1820,6 +1833,30 @@ describe("IssueReconciler", () => {
                   }
                 : issue,
             ),
+          )
+        },
+      },
+    )
+  })
+
+  it("closes fp Issues in the Repository's own Done status, as well as fp's done and rejected", () => {
+    const db = makeDbFixture({ issues: [] })
+    const seen: FpProjectOptions[] = []
+    return runFp(
+      Effect.gen(function* () {
+        const reconciler = yield* IssueReconciler
+        yield* reconciler.reconcile(fpTracked({ fpDoneStatus: "shipped" }))
+        expect(seen.map((options) => options.closedStatuses)).toEqual([
+          ["done", "rejected", "shipped"],
+        ])
+      }),
+      db,
+      {
+        issues: [fpIssue("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")],
+        numberReadyIssues: (options, issues) => {
+          seen.push(options)
+          return Effect.succeed(
+            issues.map((issue) => ({ ...issue, number: 1 })),
           )
         },
       },

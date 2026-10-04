@@ -622,6 +622,15 @@ export interface DbServiceShape {
     RepositoryNotFoundError | DatabaseError
   >
   /**
+   * The highest issue number this Repository's Issues and Work Items have
+   * ever used, 0 when none. Work Items outlive their Issues, so this is the
+   * floor below which a harness-allocated number (ADR 0074) would collide
+   * with bookkeeping keyed by issue number.
+   */
+  readonly highestIssueNumber: (
+    repositoryId: string,
+  ) => Effect.Effect<number, RepositoryNotFoundError | DatabaseError>
+  /**
    * Delete one issue. Does not publish `issueChanges`; call `notifyIssuesChanged`
    * after the mutation batch when UI/subscribers should refresh.
    */
@@ -2677,6 +2686,25 @@ export const DbServiceLive = Layer.effect(
       )
     })
 
+    const highestIssueNumber = Effect.fn("DbService.highestIssueNumber")(
+      function* (repositoryId: string) {
+        yield* ensureRepositoryExists(repositoryId)
+        const rows = (yield* sql
+          .unsafe(
+            `SELECT MAX(issue_number) AS highest FROM (
+               SELECT issue_number FROM issue WHERE repository_id = ?
+               UNION ALL
+               SELECT issue_number FROM work_item WHERE repository_id = ?
+             )`,
+            [repositoryId, repositoryId],
+          )
+          .pipe(Effect.mapError(toDatabaseError))) as readonly {
+          readonly highest: number | null
+        }[]
+        return Number(rows[0]?.highest ?? 0)
+      },
+    )
+
     const deleteIssue = Effect.fn("DbService.deleteIssue")(function* (
       repositoryId: string,
       issueNumber: number,
@@ -2787,6 +2815,7 @@ export const DbServiceLive = Layer.effect(
       listIssues,
       listWorkItemPullRequests,
       listUnfinishedCreatePrWorkItems,
+      highestIssueNumber,
       deleteIssue,
       deleteIssueByNativeId,
       markIssuesReconciled,

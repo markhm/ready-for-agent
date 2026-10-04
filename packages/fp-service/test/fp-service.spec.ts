@@ -1002,6 +1002,18 @@ describe("FpService.numberReadyIssues", () => {
     expect(byTitle.get("Child F")?.blockedBy.map((b) => b.number)).toEqual([7])
   })
 
+  test("never hands out a number at or below the Repository's floor, so a number freed in fp is not reused", async () => {
+    await writeProject(NUMBERED)
+    const issues = await run(
+      withService((service) =>
+        Effect.flatMap(service.listReadyIssues(project), (ready) =>
+          service.numberReadyIssues(project, ready, 20),
+        ),
+      ),
+    )
+    expect(issues.map((issue) => issue.number)).toEqual([3, 21, 22, 23])
+  })
+
   test("an Issue keeps its number: a second pass writes nothing", async () => {
     await writeProject(NUMBERED)
     const service = await run(makeService())
@@ -1063,7 +1075,8 @@ describe("FpService.numberReadyIssues", () => {
     )
     expect(error.kind).toBe("duplicate_issue_number")
     expect(error.message).toContain(displayIdOf(ROOT_A))
-    expect(error.message).toContain(CHILD_C.slice(0, 8))
+    // C is not Ready, and is still named as fp displays it.
+    expect(error.message).toContain(displayIdOf(CHILD_C))
     expect(await numberWrites()).toEqual([])
   })
 

@@ -17,6 +17,7 @@ import {
   resolveForgeIssueOperations,
 } from "@ready-for-agent/forge-contract"
 import {
+  FP_DEFAULT_CLOSED_STATUSES,
   FpNotConfiguredError,
   type FpRequestError,
   FpService,
@@ -244,7 +245,18 @@ export const IssueReconcilerLive = Layer.effect(
                     "Select an fp project in Repository settings before refreshing Issues",
                 })
               }
-              const project = { projectDirectory }
+              // The Repository's Done status closes an Issue as fp's own
+              // done and rejected do, whatever the project calls it.
+              const doneStatus = repository.fpDoneStatus?.trim() ?? ""
+              const project = {
+                projectDirectory,
+                closedStatuses: [
+                  ...new Set([
+                    ...FP_DEFAULT_CLOSED_STATUSES,
+                    ...(doneStatus === "" ? [] : [doneStatus]),
+                  ]),
+                ],
+              }
               // fp authors are email addresses; the operator is the
               // authenticated fp account.
               const authorScope = repository.includeAllIssueAuthors
@@ -258,7 +270,15 @@ export const IssueReconcilerLive = Layer.effect(
               // and relevance, so the Ready parent of a relevant child
               // always has its number (ADR 0074).
               const discovered = yield* fp.listReadyIssues(project)
-              const numbered = yield* fp.numberReadyIssues(project, discovered)
+              // Never below a number this Repository's Issues or Work Items
+              // have used: one freed by deleting an Issue in fp would
+              // otherwise attach that bookkeeping to a new Issue.
+              const floor = yield* db.highestIssueNumber(repository.id)
+              const numbered = yield* fp.numberReadyIssues(
+                project,
+                discovered,
+                floor,
+              )
               return {
                 remoteIssues: fpReadyLabeledIssues(numbered),
                 authorScope,

@@ -32,8 +32,11 @@ fp itself:
 - **Who allocates it.** The harness, during discovery: the first time a
   Ready-labeled fp Issue without a number is seen, it gets the next free
   number in its fp project (one more than the highest `rfa-number` in the
-  project) and the write is verified by reading it back. An Issue keeps
-  its number for good; Issues that never become Ready never get one.
+  project, and above every issue number the Repository's Issues and Work
+  Items have used in the harness, so a number freed by deleting an Issue
+  in fp is not handed out again) and the write is verified by reading it
+  back. An Issue keeps its number for good; Issues that never become Ready
+  never get one.
 - **Uniqueness.** One harness allocates for an fp project. fp syncs between
   machines, so numbering at creation (for example in the extension) could
   hand out the same number twice; a single allocator cannot. Discovery

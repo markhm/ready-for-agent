@@ -2176,6 +2176,44 @@ describe("DbService", () => {
         }),
       ))
 
+    it("reports the highest issue number Issues and Work Items have used, per Repository", () =>
+      runTest(
+        Effect.gen(function* () {
+          const db = yield* DbService
+          const sql = yield* SqlClient.SqlClient
+          const repo = yield* db.addRepository(sampleInput)
+          const other = yield* db.addRepository({
+            ...sampleInput,
+            projectPath: "acme/other",
+            localPath: "/repos/acme/other.git",
+          })
+          expect(yield* db.highestIssueNumber(repo.id)).toBe(0)
+
+          yield* db.storeIssue({
+            repositoryId: repo.id,
+            issueNumber: 9,
+            title: "Stored Issue",
+            ...sampleIssueFields,
+            githubCreatedAt: new Date("2026-07-01T12:00:00.000Z"),
+          })
+          expect(yield* db.highestIssueNumber(repo.id)).toBe(9)
+
+          // A Work Item outlives its Issue, and its number still counts.
+          yield* insertWorkItem(sql, {
+            id: "wi-highest",
+            repositoryId: repo.id,
+            issueNumber: 12,
+          })
+          yield* insertWorkItem(sql, {
+            id: "wi-other",
+            repositoryId: other.id,
+            issueNumber: 40,
+          })
+          expect(yield* db.highestIssueNumber(repo.id)).toBe(12)
+          expect(yield* db.highestIssueNumber(other.id)).toBe(40)
+        }),
+      ))
+
     it("reads the fp project settings back on the Repository", () =>
       runTest(
         Effect.gen(function* () {
