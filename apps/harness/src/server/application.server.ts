@@ -247,6 +247,7 @@ export const createApplication = async (
     Layer.provideMerge(gitlabLayer),
     Layer.provideMerge(azureDevOpsLayer),
     Layer.provideMerge(linearLayer),
+    Layer.provideMerge(fpLayer),
     Layer.provide(platformLayer),
   )
   const workerLayer = JobWorkerLive.pipe(

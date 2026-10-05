@@ -42,6 +42,11 @@ import {
   serializeReasonDetail,
 } from "@ready-for-agent/forge-contract"
 import {
+  type FpNotConfiguredError,
+  type FpRequestError,
+  FpService,
+} from "@ready-for-agent/fp-service"
+import {
   GitHubService,
   type GitHubThrottledError,
   isGitHubThrottledError,
@@ -1148,6 +1153,8 @@ export type RunStepError =
   | DatabaseError
   | LinearRequestError
   | LinearNotConfiguredError
+  | FpRequestError
+  | FpNotConfiguredError
 
 export type RetryError =
   | WorkItemNotFoundError
@@ -1619,6 +1626,7 @@ export const makeWorkItemLifecycleLive = (
   | GitLabService
   | AzureDevOpsService
   | LinearService
+  | FpService
 > =>
   Layer.effect(
     WorkItemLifecycle,
@@ -1632,6 +1640,7 @@ export const makeWorkItemLifecycleLive = (
       const gitlab = yield* GitLabService
       const azureDevOps = yield* AzureDevOpsService
       const linear = yield* LinearService
+      const fp = yield* FpService
       /**
        * Resolve build/review models for a backend id (create: effective;
        * turns: captured). Uses repository flat columns (project effective)
@@ -4484,11 +4493,18 @@ export const makeWorkItemLifecycleLive = (
               `${agentBackendLabel(workItem.agent_backend)} requested human intervention`)
             : null
           if (attentionReason !== null) {
+            const repository = (yield* db.listRepositories).find(
+              (candidate) => candidate.id === workItem.repository_id,
+            )
             yield* notifyHumanAttention({
+              repository,
               issueSource: toIssueSource(workItem),
               workItemId: workItem.id,
               reason: attentionReason,
-            }).pipe(Effect.provideService(LinearService, linear))
+            }).pipe(
+              Effect.provideService(LinearService, linear),
+              Effect.provideService(FpService, fp),
+            )
           }
 
           yield* sql

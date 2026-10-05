@@ -19,6 +19,7 @@ import {
   testRepositoryId,
 } from "@ready-for-agent/db-service/test"
 import { formatUserFacingError } from "@ready-for-agent/forge-contract"
+import type { FpService } from "@ready-for-agent/fp-service"
 import {
   GitHubRequestError,
   GitHubService,
@@ -49,6 +50,7 @@ import {
   createPr,
   makeWorkItemId,
   stubActiveAgentBackendLayer,
+  stubFpServiceLayer,
   stubGrokActiveAgentBackendLayer,
   stubLinearServiceLayer,
   workItemBranchName,
@@ -273,6 +275,7 @@ const run = <A, E>(
     | AgentBackend
     | ActiveAgentBackend
     | LinearService
+    | FpService
   >,
   layers: {
     db?: Layer.Layer<DbService>
@@ -283,6 +286,7 @@ const run = <A, E>(
     azureDevOps?: Layer.Layer<AzureDevOpsService>
     activeBackend?: Layer.Layer<ActiveAgentBackend>
     linear?: Layer.Layer<LinearService>
+    fp?: Layer.Layer<FpService>
   } = {},
 ): Promise<A> =>
   Effect.runPromise(
@@ -297,6 +301,7 @@ const run = <A, E>(
           layers.opencode ?? stubOpencode(),
           layers.activeBackend ?? stubActiveAgentBackendLayer(),
           layers.linear ?? stubLinearServiceLayer(),
+          layers.fp ?? stubFpServiceLayer(),
         ),
       ),
       Effect.provide(PlatformLayer),
@@ -946,6 +951,78 @@ describe("createPr", () => {
       expect(comments[0]?.body).toContain(
         "https://github.com/acme/widgets/pull/777",
       )
+    }))
+
+  it("publishes a GitHub PR with an fp Issue reference and posts the PR link in fp", () =>
+    withTemp(async (root) => {
+      const workItemId = makeWorkItemId()
+      const nativeId = "miygcidmabcdefghijklmnopqrstuvwx"
+      const issueUrl = `fp://issue?workspace=mhm&project=proj&id=${nativeId}`
+      const comments: Array<{
+        project: string
+        id: string
+        marker: string
+        body: string
+      }> = []
+      let reconciled: { title: string; body: string } | null = null
+      const context = baseContext(root, {
+        workItemId,
+        issueNumber: 7,
+        issueSource: {
+          tracker: "fp",
+          nativeId,
+          displayId: "MC-miygcidm",
+          url: issueUrl,
+        },
+        publicationTitle: "feat: ship fp execution",
+        publicationBody:
+          "Implements fp MC-miygcidm in the GitHub repository.\n\nCloses #7",
+      })
+      const result = await run(createPr(context), {
+        db: stubDbServiceLayer({
+          listRepositories: Effect.succeed([
+            makeRepositoryRecord({
+              localPath: "/repos/acme-widgets",
+              issueTracker: "fp",
+              fpProjectDirectory: "/work/mc-platform",
+              fpInProgressStatus: "in-progress",
+              fpDoneStatus: "done",
+            }),
+          ]),
+        }),
+        github: stubGitHub({
+          findOpenPullRequestNumber: () => Effect.succeed(777),
+          updateOpenDraftPullRequestCopy: (_repository, _branch, input) => {
+            reconciled = input
+            return Effect.succeed(777)
+          },
+        }),
+        fp: stubFpServiceLayer({
+          ensureMilestoneComment: (options, id, marker, body) =>
+            Effect.sync(() => {
+              comments.push({
+                project: options.projectDirectory,
+                id,
+                marker,
+                body,
+              })
+            }),
+        }),
+      })
+
+      expect(result.pullRequestNumber).toBe(777)
+      expect(reconciled?.body).toContain("fp: MC-miygcidm")
+      expect(reconciled?.body).toContain(issueUrl)
+      // The harness-allocated number must never close a GitHub Issue.
+      expect(reconciled?.body).not.toContain("Closes #7")
+      expect(comments).toEqual([
+        {
+          project: "/work/mc-platform",
+          id: nativeId,
+          marker: `ready-for-agent:pull-request:${workItemId}`,
+          body: `Ready for Agent opened a GitHub pull request for this Issue:\nhttps://github.com/acme/widgets/pull/777\n\nready-for-agent:pull-request:${workItemId}`,
+        },
+      ])
     }))
 
   it("uses persisted harness fallback publication copy as the PR title and body", () =>

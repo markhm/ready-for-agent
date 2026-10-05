@@ -13,6 +13,10 @@ import type {
 } from "@ready-for-agent/db-service"
 import type { MergePullRequestResult } from "@ready-for-agent/forge-contract"
 import type {
+  FpNotConfiguredError,
+  FpRequestError,
+} from "@ready-for-agent/fp-service"
+import type {
   GitHubRepositoryUnavailableError,
   GitHubRequestError,
   GitHubThrottledError,
@@ -164,6 +168,8 @@ export type LifecycleStepError =
   | AzureDevOpsNotImplementedError
   | LinearRequestError
   | LinearNotConfiguredError
+  | FpRequestError
+  | FpNotConfiguredError
   | KeymaxxerError
   | PlatformError
   | SqlError

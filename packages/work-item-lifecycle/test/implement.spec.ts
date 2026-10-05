@@ -19,6 +19,10 @@ import { DatabaseTest } from "@ready-for-agent/db/test"
 import { DbService, DbServiceLive } from "@ready-for-agent/db-service"
 import { extractCauseChain } from "@ready-for-agent/forge-contract"
 import {
+  FpNotConfiguredError,
+  type FpService,
+} from "@ready-for-agent/fp-service"
+import {
   KeymaxxerService,
   type KeymaxxerServiceShape,
 } from "@ready-for-agent/keymaxxer-service"
@@ -34,6 +38,7 @@ import {
   implement,
   makeWorkItemId,
   stubActiveAgentBackendLayer,
+  stubFpServiceLayer,
   stubLinearServiceLayer,
 } from "../src/index.js"
 import { describe, expect, it } from "bun:test"
@@ -124,6 +129,7 @@ const run = <A, E>(
     | ActiveAgentBackend
     | KeymaxxerService
     | LinearService
+    | FpService
   >,
   opencodeLayer: Layer.Layer<AgentBackend, never, never> = stubOpencode({}),
   forgeAuthLayer: Layer.Layer<
@@ -132,12 +138,14 @@ const run = <A, E>(
     never
   > = keymaxxerDisabled,
   linearLayer: Layer.Layer<LinearService> = stubLinearServiceLayer(),
+  fpLayer: Layer.Layer<FpService> = stubFpServiceLayer(),
 ): Promise<A> =>
   Effect.runPromise(
     effect.pipe(
       Effect.provide(opencodeLayer),
       Effect.provide(forgeAuthLayer),
       Effect.provide(linearLayer),
+      Effect.provide(fpLayer),
       Effect.provide(DbServiceLive),
       Effect.provide(DatabaseTest),
       Effect.provide(PlatformLayer),
@@ -1265,6 +1273,195 @@ describe("implement", () => {
       )
       expect(prompt).not.toContain("Inspect the current GitHub Issue")
       expect(prompt).not.toContain("Closes #123")
+    }))
+
+  const FP_NATIVE_ID = "miygcidmabcdefghijklmnopqrstuvwx"
+  const FP_URL = `fp://issue?workspace=mhm&project=proj&id=${FP_NATIVE_ID}`
+
+  // fp is not selectable through Repository settings until fp tracker 5, so
+  // these tests put the Repository on fp directly.
+  const useFp = (
+    repositoryId: string,
+    settings: { readonly inProgress: string | null } = {
+      inProgress: "in-progress",
+    },
+  ) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient
+      yield* sql.unsafe(
+        `UPDATE repository
+         SET issue_tracker = 'fp',
+             fp_project_directory = '/work/mc-platform',
+             fp_in_progress_status = ?,
+             fp_done_status = 'shipped'
+         WHERE id = ?`,
+        [settings.inProgress, repositoryId],
+      )
+    })
+
+  const storeFpIssue = (repositoryId: string) =>
+    Effect.gen(function* () {
+      const db = yield* DbService
+      yield* db.storeIssue({
+        repositoryId,
+        issueNumber: 7,
+        issueTracker: "fp",
+        nativeId: FP_NATIVE_ID,
+        displayId: "MC-miygcidm",
+        title: "Ship fp execution",
+        body: "Use GitHub for the PR.",
+        url: FP_URL,
+        state: "OPEN",
+        githubCreatedAt: new Date(),
+        issueAuthor: null,
+        parent: null,
+        parentPosition: null,
+        hasChildren: false,
+        blockedBy: [],
+      })
+    })
+
+  const fpContext = (root: string, workItemId: string, repositoryId: string) =>
+    baseContext(root, {
+      workItemId,
+      repositoryId,
+      issueNumber: 7,
+      issueTitle: "Ship fp execution",
+      issueSource: {
+        tracker: "fp",
+        nativeId: FP_NATIVE_ID,
+        displayId: "MC-miygcidm",
+        url: FP_URL,
+      },
+    })
+
+  it("marks the fp Issue In Progress, posts work-started, and implements from the stored Issue", () =>
+    withTemp(async (root) => {
+      const workItemId = makeWorkItemId()
+      const statuses: Array<{
+        project: string
+        closed: readonly string[] | undefined
+        id: string
+        status: string
+      }> = []
+      const comments: Array<{ id: string; marker: string; body: string }> = []
+      let prompt = ""
+      const sessionId = await run(
+        Effect.gen(function* () {
+          const repository = yield* seedRepository(root)
+          yield* useFp(repository.id)
+          yield* storeFpIssue(repository.id)
+          return yield* implement(fpContext(root, workItemId, repository.id))
+        }),
+        stubOpencode({
+          startTurn: (input) => {
+            prompt = input.prompt
+            return Effect.succeed({ sessionId: "ses_fp", assistantText: "" })
+          },
+        }),
+        keymaxxerDisabled,
+        stubLinearServiceLayer(),
+        stubFpServiceLayer({
+          updateIssueStatus: (options, id, status) =>
+            Effect.sync(() => {
+              statuses.push({
+                project: options.projectDirectory,
+                closed: options.closedStatuses,
+                id,
+                status,
+              })
+            }),
+          ensureMilestoneComment: (_options, id, marker, body) =>
+            Effect.sync(() => {
+              comments.push({ id, marker, body })
+            }),
+        }),
+      )
+
+      expect(sessionId).toBe("ses_fp")
+      expect(statuses).toEqual([
+        {
+          project: "/work/mc-platform",
+          // The Repository's Done status is finished too, so an Issue
+          // already there is not moved back to In Progress.
+          closed: ["done", "rejected", "shipped"],
+          id: FP_NATIVE_ID,
+          status: "in-progress",
+        },
+      ])
+      expect(comments).toHaveLength(1)
+      expect(comments[0]?.id).toBe(FP_NATIVE_ID)
+      expect(comments[0]?.marker).toBe(
+        `ready-for-agent:work-started:${workItemId}`,
+      )
+      expect(comments[0]?.body).toBe(
+        `Ready for Agent started implementation for this Issue.\nWork Item ${workItemId}.\n\nready-for-agent:work-started:${workItemId}`,
+      )
+      expect(prompt).toContain("Implement fp issue MC-miygcidm")
+      expect(prompt).toContain(FP_URL)
+      expect(prompt).toContain("Ship fp execution")
+      expect(prompt).toContain("Use GitHub for the PR.")
+      expect(prompt).toContain("Do not close, complete, or change its fp")
+      expect(prompt).toContain(
+        "Do not fabricate a GitHub numeric closing reference",
+      )
+      expect(prompt).not.toContain("Closes #7")
+    }))
+
+  it("fails fp Implement before the agent turn when the fp project has no In Progress status", () =>
+    withTemp(async (root) => {
+      let turns = 0
+      const error = await run(
+        Effect.gen(function* () {
+          const repository = yield* seedRepository(root)
+          yield* useFp(repository.id, { inProgress: null })
+          yield* storeFpIssue(repository.id)
+          return yield* Effect.flip(
+            implement(fpContext(root, makeWorkItemId(), repository.id)),
+          )
+        }),
+        stubOpencode({
+          startTurn: () =>
+            Effect.sync(() => {
+              turns += 1
+              return { sessionId: "ses_never", assistantText: "" }
+            }),
+        }),
+        keymaxxerDisabled,
+      )
+      expect(error).toBeInstanceOf(FpNotConfiguredError)
+      expect(error).toMatchObject({
+        message: expect.stringContaining("No In Progress status"),
+      })
+      expect(turns).toBe(0)
+    }))
+
+  it("implements an fp Work Item without touching fp once the Repository has left fp", () =>
+    withTemp(async (root) => {
+      const writes: string[] = []
+      const sessionId = await run(
+        Effect.gen(function* () {
+          const repository = yield* seedRepository(root)
+          // Still on GitHub: the fp Issue was captured before a switch.
+          yield* storeFpIssue(repository.id)
+          return yield* implement(
+            fpContext(root, makeWorkItemId(), repository.id),
+          )
+        }),
+        stubOpencode({
+          startTurn: () =>
+            Effect.succeed({ sessionId: "ses_left", assistantText: "" }),
+        }),
+        keymaxxerDisabled,
+        stubLinearServiceLayer(),
+        stubFpServiceLayer({
+          updateIssueStatus: () => Effect.sync(() => writes.push("status")),
+          ensureMilestoneComment: () =>
+            Effect.sync(() => writes.push("comment")),
+        }),
+      )
+      expect(sessionId).toBe("ses_left")
+      expect(writes).toEqual([])
     }))
 
   it("loads Linear Implement content by native identity, not a colliding GitHub issue number", () =>

@@ -22,6 +22,7 @@ import {
   WorkItemLifecycleLive,
   stubActiveAgentBackendLayer,
   stubAzureDevOpsServiceLayer,
+  stubFpServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
   stubLinearServiceLayer,
@@ -102,6 +103,7 @@ describe("Agent Backend readiness gates", () => {
       Layer.provideMerge(stubGitLabServiceLayer()),
       Layer.provideMerge(stubAzureDevOpsServiceLayer()),
       Layer.provideMerge(stubLinearServiceLayer()),
+      Layer.provideMerge(stubFpServiceLayer()),
       Layer.provideMerge(
         Layer.succeed(LifecycleSteps, LifecycleSteps.of(successfulSteps)),
       ),
@@ -210,6 +212,7 @@ describe("Agent Backend readiness gates", () => {
       Layer.provideMerge(stubGitLabServiceLayer()),
       Layer.provideMerge(stubAzureDevOpsServiceLayer()),
       Layer.provideMerge(stubLinearServiceLayer()),
+      Layer.provideMerge(stubFpServiceLayer()),
       Layer.provideMerge(
         Layer.succeed(LifecycleSteps, LifecycleSteps.of(successfulSteps)),
       ),
@@ -380,6 +383,7 @@ const readinessLifecycleLayer = (
     Layer.provideMerge(stubGitLabServiceLayer()),
     Layer.provideMerge(stubAzureDevOpsServiceLayer()),
     Layer.provideMerge(stubLinearServiceLayer()),
+    Layer.provideMerge(stubFpServiceLayer()),
     Layer.provideMerge(Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps))),
     Layer.provideMerge(DbServiceLive),
     Layer.provideMerge(SqliteQueueServiceLive),

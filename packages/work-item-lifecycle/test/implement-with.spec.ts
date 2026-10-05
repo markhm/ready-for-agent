@@ -37,6 +37,7 @@ import {
   WorkItemLifecycleLive,
   stubActiveAgentBackendLayer,
   stubAzureDevOpsServiceLayer,
+  stubFpServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
   stubLinearServiceLayer,
@@ -255,6 +256,7 @@ const lifecycleLayer = (
     Layer.provideMerge(stubGitLabServiceLayer()),
     Layer.provideMerge(stubAzureDevOpsServiceLayer()),
     Layer.provideMerge(stubLinearServiceLayer()),
+    Layer.provideMerge(stubFpServiceLayer()),
     Layer.provideMerge(Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps))),
     Layer.provideMerge(DbServiceLive),
     Layer.provideMerge(SqliteQueueServiceLive),
@@ -565,6 +567,7 @@ describe("implementWith", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(successfulSteps)),
         ),

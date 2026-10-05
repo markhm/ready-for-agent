@@ -1,4 +1,8 @@
 import { Schema } from "effect"
+import type {
+  FpNotConfiguredError,
+  FpRequestError,
+} from "@ready-for-agent/fp-service"
 import type { LinearRequestError } from "@ready-for-agent/linear-service"
 
 export class CreatePrWorktreeContextMissingError extends Schema.TaggedErrorClass<CreatePrWorktreeContextMissingError>()(
@@ -72,3 +76,5 @@ export type CreatePrError =
   | CreatePrLookupError
   | CreatePrPostconditionError
   | LinearRequestError
+  | FpRequestError
+  | FpNotConfiguredError

@@ -18,6 +18,7 @@ import {
   WorkItemLifecycleLive,
   stubActiveAgentBackendLayer,
   stubAzureDevOpsServiceLayer,
+  stubFpServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
   stubLinearServiceLayer,
@@ -82,6 +83,7 @@ const lifecycleLayer = (steps: LifecycleStepsShape) =>
     Layer.provideMerge(stubGitLabServiceLayer()),
     Layer.provideMerge(stubAzureDevOpsServiceLayer()),
     Layer.provideMerge(stubLinearServiceLayer()),
+    Layer.provideMerge(stubFpServiceLayer()),
     Layer.provideMerge(Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps))),
     Layer.provideMerge(DbServiceLive),
     Layer.provideMerge(SqliteQueueServiceLive),
@@ -220,6 +222,7 @@ describe("terminal_auth_error Step Run classification (issue #1058)", () => {
       Layer.provideMerge(stubGitLabServiceLayer()),
       Layer.provideMerge(stubAzureDevOpsServiceLayer()),
       Layer.provideMerge(stubLinearServiceLayer()),
+      Layer.provideMerge(stubFpServiceLayer()),
       Layer.provideMerge(
         Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
       ),
