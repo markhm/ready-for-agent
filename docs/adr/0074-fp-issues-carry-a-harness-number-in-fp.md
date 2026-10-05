@@ -32,8 +32,11 @@ fp itself:
 - **Who allocates it.** The harness, during discovery: the first time a
   Ready-labeled fp Issue without a number is seen, it gets the next free
   number in its fp project (one more than the highest `rfa-number` in the
-  project) and the write is verified by reading it back. An Issue keeps
-  its number for good; Issues that never become Ready never get one.
+  project, and above every issue number the Repository's Issues and Work
+  Items have used in the harness, so a number freed by deleting an Issue
+  in fp is not handed out again) and the write is verified by reading it
+  back. An Issue keeps its number for good; Issues that never become Ready
+  never get one.
 - **Uniqueness.** One harness allocates for an fp project. fp syncs between
   machines, so numbering at creation (for example in the extension) could
   hand out the same number twice; a single allocator cannot. Discovery
@@ -62,8 +65,16 @@ the duplicate risk above.
   fp Issue without a number. For every other Issue Tracker kind refresh
   stays read-only.
 - Reading every number in one call relies on `fp issue list` including
-  properties (fp CLI build a381766, reported as version 0.25.0). Older
-  builds fall back to one `fp issue show` per candidate.
+  properties (fp CLI build a381766, reported as version 0.25.0). An older
+  build is refused with a request to run `fp update`, rather than read
+  slowly: fp updates itself, and the same list also carries the labels
+  discovery needs.
+- A parent or blocker that has never been Ready has no number, but stored
+  references need one; it is stored under a placeholder number. Nothing
+  resolves a reference by its number: parents are matched by native id and
+  blockers are only counted, as with Linear's unreadable blockers. A parent
+  that matters, an open Ready-labeled one, is numbered with the Ready set,
+  before author scope and relevance filter it.
 - Moving the numbers between machines relies on fp sync carrying extension
   properties, which is not yet verified.
 - If the maintainer later makes the number optional, the harness stops

@@ -103,6 +103,7 @@ export const stubDbService = (
   listIssues: unused,
   listWorkItemPullRequests: unused,
   listUnfinishedCreatePrWorkItems: unused,
+  highestIssueNumber: unused,
   deleteIssue: unused,
   deleteIssueByNativeId: unused,
   markIssuesReconciled: unused,

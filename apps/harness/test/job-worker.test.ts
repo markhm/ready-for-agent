@@ -900,6 +900,7 @@ describe("Job worker", () => {
         Layer.provideMerge(defaultGitlabLayer),
         Layer.provideMerge(defaultAzureDevOpsLayer),
         Layer.provideMerge(defaultLinearLayer),
+        Layer.provideMerge(makeFpServiceTest()),
       )
       const layer = Layer.mergeAll(
         database,

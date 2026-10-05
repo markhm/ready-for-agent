@@ -51,6 +51,8 @@ type Fixture = {
   readonly createdAt: string
   readonly updatedAt: string
   readonly author?: string | null
+  /** Raw `rfa-number` property value; absent means the property is unset. */
+  readonly number?: string
 }
 
 const fixture = (
@@ -117,7 +119,15 @@ let commandPath = ""
 let logPath = ""
 let project = { projectDirectory: "" }
 
-const writeProject = async (issues: readonly Fixture[]) => {
+const propertiesOf = (issue: Fixture) => ({
+  labels: issue.labels,
+  ...(issue.number === undefined ? {} : { "rfa-number": issue.number }),
+})
+
+const writeProject = async (
+  issues: readonly Fixture[],
+  { listProperties = true }: { readonly listProperties?: boolean } = {},
+) => {
   await rm(fixturesDirectory, { recursive: true, force: true })
   await Bun.write(join(fixturesDirectory, ".keep"), "")
   const list = {
@@ -132,6 +142,7 @@ const writeProject = async (issues: readonly Fixture[]) => {
       dependencies: issue.dependencies,
       createdAt: issue.createdAt,
       updatedAt: issue.updatedAt,
+      ...(listProperties ? { properties: propertiesOf(issue) } : {}),
     })),
   }
   await writeFile(join(fixturesDirectory, "list.json"), JSON.stringify(list))
@@ -149,7 +160,7 @@ const writeProject = async (issues: readonly Fixture[]) => {
       author: issue.author,
       createdAt: issue.createdAt,
       updatedAt: issue.updatedAt,
-      properties: { labels: issue.labels },
+      properties: propertiesOf(issue),
       comments: [],
     }
     const json = JSON.stringify(show)
@@ -187,6 +198,26 @@ if (op === "status") {
   const json = JSON.stringify(show)
   writeFileSync(showFile(show.id), json)
   writeFileSync(showFile(show.displayId), json)
+} else if (op === "property") {
+  const eq = value.indexOf("=")
+  const key = value.slice(0, eq)
+  const raw = value.slice(eq + 1)
+  const show = readJson(showFile(target))
+  const updatedAt = new Date().toISOString()
+  show.properties = { ...(show.properties ?? {}), [key]: raw }
+  show.updatedAt = updatedAt
+  const json = JSON.stringify(show)
+  writeFileSync(showFile(show.id), json)
+  writeFileSync(showFile(show.displayId), json)
+  const listFile = join(fixtures, "list.json")
+  const list = readJson(listFile)
+  for (const issue of list.issues) {
+    if (issue.id === show.id) {
+      issue.properties = { ...(issue.properties ?? {}), [key]: raw }
+      issue.updatedAt = updatedAt
+    }
+  }
+  writeFileSync(listFile, JSON.stringify(list))
 } else if (op === "list") {
   process.stdout.write(JSON.stringify(comments(readJson(showFile(target)).id)))
 } else if (op === "add") {
@@ -222,6 +253,16 @@ const fakeFpScript = (
 ): string => `#!/bin/sh
 printf '%s\\n' "$*" >> "${log}"
 notfound() { printf '%s\\n' "Issue $1 not found" "  Suggestion: Run 'fp issue list' to see available issues"; exit 1; }
+if [ "$1" = "issue" ] && [ "$2" = "update" ] && [ "$4" = "--property" ]; then
+  [ -f "${fixtures}/show-$3.json" ] || notfound "$3"
+  if [ -f "${fixtures}/no-number-property" ]; then
+    printf '%s\\n' "Invalid value for extension property '\${5%%=*}': Property is not registered" >&2
+    exit 1
+  fi
+  if [ ! -f "${fixtures}/silent" ]; then "${bun}" "${mutate}" property "${fixtures}" "$3" "$5" || exit 1; fi
+  printf '%s\\n' "" "✓ Updated $3:" "  - properties: \${5%%=*}" ""
+  exit 0
+fi
 if [ "$1" = "issue" ] && [ "$2" = "update" ]; then
   if [ -f "${fixtures}/invalid-status" ]; then
     printf '%s\\n' "Invalid status: Status \\"$5\\" is not in the registered options." "  Suggestion: Use one of: todo, in-progress, done"
@@ -283,7 +324,8 @@ if [ "$1" = "guide" ]; then
   # fp 0.25.0 prints the guide on stderr; stdout is a blank line.
   echo ""
   if [ -f "${fixtures}/unregistered" ]; then printf '%s\\n' "## Project context" "- Not in an fp project. Run fp init first." "" >&2; exit 0; fi
-  printf '%s\\n' "## Project context" "- Prefix: FP" "- Registered statuses (in order): todo, selected, in-progress, done" "  - Default for new issues: todo" "" >&2
+  if [ -f "${fixtures}/no-number-property" ]; then properties="labels (multiselect)"; else properties="labels (multiselect), rfa-number (text)"; fi
+  printf '%s\\n' "## Project context" "- Prefix: FP" "- Registered statuses (in order): todo, selected, in-progress, done" "  - Default for new issues: todo" "- Other registered properties: $properties" "" >&2
   exit 0
 fi
 if [ -f "${fixtures}/unregistered" ]; then
@@ -410,6 +452,7 @@ describe("FpService.listReadyIssues", () => {
       nativeId: ROOT_A,
       displayId: displayIdOf(ROOT_A),
       url: linkFor(ROOT_A),
+      number: null,
       state: "OPEN",
       isReadyLabeled: true,
     })
@@ -421,7 +464,15 @@ describe("FpService.listReadyIssues", () => {
         nativeId: CHILD_C,
         displayId: displayIdOf(CHILD_C),
         url: linkFor(CHILD_C),
+        number: null,
       },
+    ])
+    // No Issue carries an rfa-number yet.
+    expect(issues.map((issue) => issue.number)).toEqual([
+      null,
+      null,
+      null,
+      null,
     ])
 
     // E has a child (unlabeled F), so it is a parent, not a leaf.
@@ -456,11 +507,11 @@ describe("FpService.listReadyIssues", () => {
     ])
   })
 
-  test("inspects only open Issues, and only once per poll", async () => {
+  test("inspects only open Ready-labeled Issues, and only once per poll", async () => {
     await run(withService((service) => service.listReadyIssues(project)))
-    // Six open Issues (A, B, C, E, F, G); their parents are candidates too,
-    // so no extra show is needed for them.
-    expect(await showCalls()).toBe(6)
+    // Labels come from the list, so only the four Ready candidates (A, B,
+    // E, G) are shown; B's parent A is one of them, so it costs no extra.
+    expect(await showCalls()).toBe(4)
   })
 
   test("a Ready child of a closed parent reports the parent closed, at the cost of one extra show", async () => {
@@ -482,12 +533,13 @@ describe("FpService.listReadyIssues", () => {
       nativeId: DONE_D,
       displayId: displayIdOf(DONE_D),
       url: linkFor(DONE_D),
+      number: null,
       state: "CLOSED",
       isReadyLabeled: true,
     })
     expect(childH?.parentPosition).toBe(1)
-    // Seven open candidates plus the closed parent D.
-    expect(await showCalls()).toBe(8)
+    // Five Ready candidates (A, B, E, G, H) plus the closed parent D.
+    expect(await showCalls()).toBe(6)
   })
 
   test("candidateStatuses narrows the inspection to those statuses", async () => {
@@ -507,30 +559,53 @@ describe("FpService.listReadyIssues", () => {
     const service = await run(makeService())
     const first = await run(service.listReadyIssues(project))
     expect(first).toHaveLength(4)
-    expect(await showCalls()).toBe(6)
+    expect(await showCalls()).toBe(4)
 
     await rm(logPath, { force: true })
     const second = await run(service.listReadyIssues(project))
     expect(second).toEqual(first)
     expect(await showCalls()).toBe(0)
 
-    // A label edit moves updatedAt on fp 0.25.0 (as do parent, dependency
-    // and comment edits; measured 2026-09-22); only that Issue is re-read.
+    // An edit moves updatedAt on fp 0.25.0 (measured 2026-09-22 for labels,
+    // parent, dependencies and comments); only that Issue is re-read.
     await rm(logPath, { force: true })
     await writeProject(
       PROJECT.map((issue) =>
         issue.id === ROOT_E
-          ? { ...issue, labels: [], updatedAt: "2026-09-22T09:00:00.000Z" }
+          ? {
+              ...issue,
+              title: "Root E renamed",
+              updatedAt: "2026-09-22T09:00:00.000Z",
+            }
           : issue,
       ),
     )
     const third = await run(service.listReadyIssues(project))
     expect(third.map((issue) => issue.title)).toEqual([
       "Root A",
+      "Root E renamed",
       "Selected G",
       "Child B",
     ])
     expect(await showCalls()).toBe(1)
+
+    // Losing the Ready label is read from the list: the Issue drops out
+    // without a show.
+    await rm(logPath, { force: true })
+    await writeProject(
+      PROJECT.map((issue) =>
+        issue.id === ROOT_E
+          ? { ...issue, labels: [], updatedAt: "2026-09-22T10:00:00.000Z" }
+          : issue,
+      ),
+    )
+    const fourth = await run(service.listReadyIssues(project))
+    expect(fourth.map((issue) => issue.title)).toEqual([
+      "Root A",
+      "Selected G",
+      "Child B",
+    ])
+    expect(await showCalls()).toBe(0)
   })
 
   test("re-reads the remote identity every poll, so unlinking takes effect without a restart", async () => {
@@ -611,23 +686,83 @@ describe("FpService.listReadyIssues", () => {
         title: "Blocked H",
         status: "todo",
         labels: ["ready-for-agent"],
-        dependencies: [DONE_D],
+        dependencies: [CHILD_C],
       }),
-      fixture(DONE_D, { title: "Done D", status: "done" }),
+      fixture(CHILD_C, { title: "Child C", status: "todo", number: "7" }),
     ])
     const issues = await run(
       withService((service) => service.listReadyIssues(project)),
     )
     expect(issues).toHaveLength(1)
-    // D is closed, so it was never inspected; its display id is inferred.
+    // C is not Ready, so it was never inspected; its display id is
+    // inferred and its number read from the list.
     expect(await showCalls()).toBe(1)
     expect(issues[0]?.blockedBy).toEqual([
       {
-        nativeId: DONE_D,
-        displayId: displayIdOf(DONE_D),
-        url: linkFor(DONE_D),
+        nativeId: CHILD_C,
+        displayId: displayIdOf(CHILD_C),
+        url: linkFor(CHILD_C),
+        number: 7,
       },
     ])
+  })
+
+  test("a finished blocker no longer blocks; one missing from the project still does", async () => {
+    await writeProject([
+      fixture(ISSUE_ID("h"), {
+        title: "Blocked H",
+        status: "todo",
+        labels: ["ready-for-agent"],
+        dependencies: [DONE_D, CHILD_C, ISSUE_ID("z")],
+      }),
+      fixture(DONE_D, { title: "Done D", status: "done" }),
+      fixture(CHILD_C, { title: "Child C", status: "todo" }),
+    ])
+    const issues = await run(
+      withService((service) =>
+        service.listReadyIssues({
+          ...project,
+          closedStatuses: ["done", "rejected"],
+        }),
+      ),
+    )
+    expect(issues[0]?.blockedBy.map((blocker) => blocker.nativeId)).toEqual([
+      CHILD_C,
+      ISSUE_ID("z"),
+    ])
+  })
+
+  test("reads each Issue's number from the list, and a parent's too", async () => {
+    await writeProject(
+      PROJECT.map((issue) =>
+        issue.id === ROOT_A
+          ? { ...issue, number: "3" }
+          : issue.id === CHILD_B
+            ? { ...issue, number: "12" }
+            : issue.id === ROOT_E
+              ? { ...issue, number: "" }
+              : issue,
+      ),
+    )
+    const issues = await run(
+      withService((service) => service.listReadyIssues(project)),
+    )
+    const byTitle = new Map(issues.map((issue) => [issue.title, issue]))
+    expect(byTitle.get("Root A")?.number).toBe(3)
+    expect(byTitle.get("Child B")?.number).toBe(12)
+    expect(byTitle.get("Child B")?.parent?.number).toBe(3)
+    // fp clears a property by writing it empty: that is no number.
+    expect(byTitle.get("Root E")?.number).toBeNull()
+    expect(byTitle.get("Selected G")?.number).toBeNull()
+  })
+
+  test("a list without properties is an fp build too old to read labels from, not an empty project", async () => {
+    await writeProject(PROJECT, { listProperties: false })
+    const error = await run(
+      withService((service) => Effect.flip(service.listReadyIssues(project))),
+    )
+    expect(error.kind).toBe("outdated_cli")
+    expect(error.message).toContain("Run `fp update`")
   })
 
   test("forgets the cached show of an Issue that left the project", async () => {
@@ -674,6 +809,7 @@ describe("FpService.listReadyIssues", () => {
       nativeId: ISSUE_ID("z"),
       displayId: ISSUE_ID("z"),
       url: linkFor(ISSUE_ID("z")),
+      number: null,
       state: "CLOSED",
       isReadyLabeled: false,
     })
@@ -787,6 +923,240 @@ describe("FpService.getAuthenticatedUserLogin", () => {
   })
 })
 
+describe("FpService.numberReadyIssues", () => {
+  // A holds 3 and the closed D holds 5, so the next number is 6; the Ready
+  // set in creation order is A, E, G, B.
+  const NUMBERED = PROJECT.map((issue) =>
+    issue.id === ROOT_A
+      ? { ...issue, number: "3" }
+      : issue.id === DONE_D
+        ? { ...issue, number: "5" }
+        : issue,
+  )
+
+  const numberWrites = async () =>
+    (await calls()).filter((line) => line.includes("--property rfa-number="))
+
+  const listedNumbers = async () => {
+    const list = JSON.parse(
+      await readFile(join(fixturesDirectory, "list.json"), "utf8"),
+    ) as {
+      issues: { id: string; properties?: Record<string, unknown> }[]
+    }
+    return new Map(
+      list.issues.map((issue) => [issue.id, issue.properties?.["rfa-number"]]),
+    )
+  }
+
+  const discoverAndNumber = (service: FpServiceShape) =>
+    Effect.flatMap(service.listReadyIssues(project), (issues) =>
+      service.numberReadyIssues(project, issues),
+    )
+
+  test("gives each Ready Issue without a number the next one in the project, in creation order, and reads it back", async () => {
+    await writeProject(NUMBERED)
+    const issues = await run(withService(discoverAndNumber))
+    expect(issues.map((issue) => [issue.title, issue.number])).toEqual([
+      ["Root A", 3],
+      ["Root E", 6],
+      ["Selected G", 7],
+      ["Child B", 8],
+    ])
+    // References follow: B's parent is A.
+    expect(issues[3]?.parent?.number).toBe(3)
+    // B's open blocker C is not Ready and stays without a number.
+    expect(issues[3]?.blockedBy.map((blocker) => blocker.number)).toEqual([
+      null,
+    ])
+    expect(await numberWrites()).toEqual([
+      `issue update ${ROOT_E} --property rfa-number=6`,
+      `issue update ${SELECTED_G} --property rfa-number=7`,
+      `issue update ${CHILD_B} --property rfa-number=8`,
+    ])
+    const stored = await listedNumbers()
+    expect(stored.get(ROOT_E)).toBe("6")
+    expect(stored.get(SELECTED_G)).toBe("7")
+    expect(stored.get(CHILD_B)).toBe("8")
+  })
+
+  test("a parent and a blocker numbered in the same pass are numbered in their references too", async () => {
+    // F (child of E) becomes Ready and is blocked by G; E and G get their
+    // numbers in this pass, so F's references must carry them.
+    await writeProject(
+      NUMBERED.map((issue) =>
+        issue.id === CHILD_F
+          ? {
+              ...issue,
+              labels: ["ready-for-agent"],
+              dependencies: [SELECTED_G],
+              createdAt: "2026-09-20T13:00:00.000Z",
+            }
+          : issue,
+      ),
+    )
+    const issues = await run(withService(discoverAndNumber))
+    const byTitle = new Map(issues.map((issue) => [issue.title, issue]))
+    expect(byTitle.get("Root E")?.number).toBe(6)
+    expect(byTitle.get("Selected G")?.number).toBe(7)
+    expect(byTitle.get("Child F")?.parent?.number).toBe(6)
+    expect(byTitle.get("Child F")?.blockedBy.map((b) => b.number)).toEqual([7])
+  })
+
+  test("never hands out a number at or below the Repository's floor, so a number freed in fp is not reused", async () => {
+    await writeProject(NUMBERED)
+    const issues = await run(
+      withService((service) =>
+        Effect.flatMap(service.listReadyIssues(project), (ready) =>
+          service.numberReadyIssues(project, ready, { floor: 20 }),
+        ),
+      ),
+    )
+    expect(issues.map((issue) => issue.number)).toEqual([3, 21, 22, 23])
+  })
+
+  test("an Issue keeps its number: a second pass writes nothing", async () => {
+    await writeProject(NUMBERED)
+    const service = await run(makeService())
+    const first = await run(discoverAndNumber(service))
+    await rm(logPath, { force: true })
+    const second = await run(discoverAndNumber(service))
+    expect(second.map((issue) => issue.number)).toEqual(
+      first.map((issue) => issue.number),
+    )
+    expect(await numberWrites()).toEqual([])
+  })
+
+  test("a number fp gained since discovery is kept, not overwritten", async () => {
+    await writeProject(NUMBERED)
+    const service = await run(makeService())
+    const discovered = await run(service.listReadyIssues(project))
+    // Someone numbers E by hand between discovery and numbering.
+    await writeProject(
+      NUMBERED.map((issue) =>
+        issue.id === ROOT_E ? { ...issue, number: "40" } : issue,
+      ),
+    )
+    const numbered = await run(service.numberReadyIssues(project, discovered))
+    expect(numbered.map((issue) => [issue.title, issue.number])).toEqual([
+      ["Root A", 3],
+      ["Root E", 40],
+      ["Selected G", 41],
+      ["Child B", 42],
+    ])
+  })
+
+  test("concurrent passes on one service never hand out a number twice", async () => {
+    await writeProject(NUMBERED)
+    const service = await run(makeService())
+    const discovered = await run(service.listReadyIssues(project))
+    await rm(logPath, { force: true })
+    const [left, right] = await run(
+      Effect.all(
+        [
+          service.numberReadyIssues(project, discovered),
+          service.numberReadyIssues(project, discovered),
+        ],
+        { concurrency: 2 },
+      ),
+    )
+    expect(left?.map((issue) => issue.number)).toEqual([3, 6, 7, 8])
+    expect(right?.map((issue) => issue.number)).toEqual([3, 6, 7, 8])
+    expect(await numberWrites()).toHaveLength(3)
+  })
+
+  test("a duplicate number stops numbering, names both Issues and writes nothing", async () => {
+    await writeProject(
+      NUMBERED.map((issue) =>
+        issue.id === CHILD_C ? { ...issue, number: "3" } : issue,
+      ),
+    )
+    const error = await run(
+      withService((service) => Effect.flip(discoverAndNumber(service))),
+    )
+    expect(error.kind).toBe("duplicate_issue_number")
+    expect(error.message).toContain(displayIdOf(ROOT_A))
+    // C is not Ready, and is still named as fp displays it.
+    expect(error.message).toContain(displayIdOf(CHILD_C))
+    expect(await numberWrites()).toEqual([])
+  })
+
+  test("a duplicate report says which Issue the harness knows by that number", async () => {
+    await writeProject(
+      NUMBERED.map((issue) =>
+        issue.id === CHILD_C ? { ...issue, number: "3" } : issue,
+      ),
+    )
+    const error = await run(
+      withService((service) =>
+        Effect.flip(
+          Effect.flatMap(service.listReadyIssues(project), (ready) =>
+            service.numberReadyIssues(project, ready, {
+              held: new Map([[ROOT_A, 3]]),
+            }),
+          ),
+        ),
+      ),
+    )
+    expect(error.message).toContain(
+      `the harness knows ${displayIdOf(ROOT_A)} by that number, so clear ${displayIdOf(CHILD_C)}'s in fp`,
+    )
+  })
+
+  test("with no Ready Issue to read the prefix from, a duplicate is still named as fp displays it", async () => {
+    await writeProject([
+      fixture(CHILD_C, { title: "Child C", status: "todo", number: "7" }),
+      fixture(DONE_D, { title: "Done D", status: "done", number: "7" }),
+    ])
+    const error = await run(
+      withService((service) =>
+        Effect.flip(
+          Effect.flatMap(service.listReadyIssues(project), (ready) =>
+            service.numberReadyIssues(project, ready),
+          ),
+        ),
+      ),
+    )
+    expect(error.kind).toBe("duplicate_issue_number")
+    expect(error.message).toContain(displayIdOf(CHILD_C))
+    expect(error.message).toContain(displayIdOf(DONE_D))
+  })
+
+  test("a number that is not a positive integer stops numbering and is never overwritten", async () => {
+    await writeProject(
+      NUMBERED.map((issue) =>
+        issue.id === ROOT_E ? { ...issue, number: "E-12" } : issue,
+      ),
+    )
+    const error = await run(
+      withService((service) => Effect.flip(discoverAndNumber(service))),
+    )
+    expect(error.kind).toBe("invalid_issue_number")
+    expect(error.message).toContain(displayIdOf(ROOT_E))
+    expect(error.message).toContain('"E-12"')
+    expect(await numberWrites()).toEqual([])
+  })
+
+  test("a project without the rfa-number extension fails with an install hint at the first write", async () => {
+    await writeProject(NUMBERED)
+    await marker("no-number-property")
+    const error = await run(
+      withService((service) => Effect.flip(discoverAndNumber(service))),
+    )
+    expect(error.kind).toBe("property_not_registered")
+    expect(error.message).toContain("rfa-number fp extension")
+    expect(await numberWrites()).toHaveLength(1)
+  })
+
+  test("a write fp reports but does not apply is an error, not a number", async () => {
+    await writeProject(NUMBERED)
+    await marker("silent")
+    const error = await run(
+      withService((service) => Effect.flip(discoverAndNumber(service))),
+    )
+    expect(error.kind).toBe("write_not_applied")
+  })
+})
+
 describe("FpService.checkReadiness", () => {
   test("is ready when the CLI runs and the project resolves", async () => {
     const readiness = await run(
@@ -797,6 +1167,17 @@ describe("FpService.checkReadiness", () => {
       version: "0.25.0",
       remote: { workspaceSlug: "ws-test", projectId: "proj-test" },
     })
+  })
+
+  test("is not ready when the project lacks the rfa-number extension", async () => {
+    await marker("no-number-property")
+    const readiness = await run(
+      withService((service) => service.checkReadiness(directory)),
+    )
+    expect(readiness._tag).toBe("number_property_missing")
+    expect("message" in readiness && readiness.message).toContain(
+      "rfa-number fp extension",
+    )
   })
 
   test("is ready without a remote for a local-only project, so callers can warn that links will not open", async () => {

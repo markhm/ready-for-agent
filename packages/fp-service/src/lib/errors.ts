@@ -5,7 +5,11 @@ import { Schema } from "effect"
  * discovery drop one vanished Issue instead of failing the poll;
  * `invalid_status` and `comment_not_found` come from writes;
  * `write_not_applied` is a write fp reported as done that the read-back
- * did not find.
+ * did not find; `outdated_cli` is an fp build whose output lacks what the
+ * harness needs. `property_not_registered` is a write of the `rfa-number`
+ * property in a project without its extension; `invalid_issue_number` and
+ * `duplicate_issue_number` stop numbering a project whose numbers the
+ * harness cannot trust (ADR 0074).
  */
 export const FpFailureKind = Schema.Literals([
   "project_not_registered",
@@ -16,6 +20,10 @@ export const FpFailureKind = Schema.Literals([
   "timeout",
   "spawn_failed",
   "unreadable_output",
+  "outdated_cli",
+  "property_not_registered",
+  "invalid_issue_number",
+  "duplicate_issue_number",
   "unknown",
 ])
 export type FpFailureKind = typeof FpFailureKind.Type

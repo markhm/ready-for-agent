@@ -17,6 +17,12 @@ import {
   resolveForgeIssueOperations,
 } from "@ready-for-agent/forge-contract"
 import {
+  FP_DEFAULT_CLOSED_STATUSES,
+  FpNotConfiguredError,
+  type FpRequestError,
+  FpService,
+} from "@ready-for-agent/fp-service"
+import {
   type GitHubOperationOptions,
   type GitHubRepositoryUnavailableError,
   type GitHubRequestError,
@@ -42,6 +48,7 @@ import {
   type LinearRequestError,
   LinearService,
 } from "@ready-for-agent/linear-service"
+import { fpReadyLabeledIssues } from "./fp-ready-issues.js"
 
 export const CompetingPullRequestIdentity = Schema.Struct({
   repository: Schema.String,
@@ -102,6 +109,8 @@ export type ReconciliationError =
   | AzureDevOpsNotImplementedError
   | LinearRequestError
   | LinearNotConfiguredError
+  | FpRequestError
+  | FpNotConfiguredError
   | ReconciliationMutationError
   | RepositoryNotFoundError
   | DatabaseError
@@ -147,6 +156,10 @@ const matches = (
     remote.parent === null ? null : referenceIdentity(remote.parent)
   return (
     local.issueTracker === issueTracker &&
+    // A Forge or Linear Issue never changes number; an fp Issue's
+    // harness-allocated number can be corrected in fp (ADR 0074), and the
+    // store must follow it.
+    local.issueNumber === remote.number &&
     local.nativeId === identity.nativeId &&
     local.displayId === identity.displayId &&
     local.title === remote.title &&
@@ -181,6 +194,7 @@ export const IssueReconcilerLive = Layer.effect(
     const gitlab = yield* GitLabService
     const azureDevOps = yield* AzureDevOpsService
     const linear = yield* LinearService
+    const fp = yield* FpService
 
     const reconcile = Effect.fn("IssueReconciler.reconcile")(function* (
       repository: RepositoryRecord,
@@ -225,7 +239,62 @@ export const IssueReconcilerLive = Layer.effect(
               }
             })
           case "fp":
-            return notSupported(issueTracker)
+            return Effect.gen(function* () {
+              const projectDirectory =
+                repository.fpProjectDirectory?.trim() ?? ""
+              if (projectDirectory === "") {
+                return yield* new FpNotConfiguredError({
+                  repositoryId: repository.id,
+                  message:
+                    "Select an fp project in Repository settings before refreshing Issues",
+                })
+              }
+              // The Repository's Done status closes an Issue as fp's own
+              // done and rejected do, whatever the project calls it.
+              const doneStatus = repository.fpDoneStatus?.trim() ?? ""
+              const project = {
+                projectDirectory,
+                closedStatuses: [
+                  ...new Set([
+                    ...FP_DEFAULT_CLOSED_STATUSES,
+                    ...(doneStatus === "" ? [] : [doneStatus]),
+                  ]),
+                ],
+              }
+              // fp authors are email addresses; the operator is the
+              // authenticated fp account.
+              const authorScope = repository.includeAllIssueAuthors
+                ? { includeAll: true as const }
+                : {
+                    includeAll: false as const,
+                    operatorLogin:
+                      yield* fp.getAuthenticatedUserLogin(projectDirectory),
+                  }
+              // Numbering runs on the whole Ready set, before author scope
+              // and relevance, so the Ready parent of a relevant child
+              // always has its number (ADR 0074).
+              const discovered = yield* fp.listReadyIssues(project)
+              // Never below a number this Repository's Issues or Work Items
+              // have used: one freed by deleting an Issue in fp would
+              // otherwise attach that bookkeeping to a new Issue.
+              const floor = yield* db.highestIssueNumber(repository.id)
+              // The numbers the store holds name the Issue to keep when fp
+              // reports a duplicate.
+              const held = new Map(
+                localIssues
+                  .filter((issue) => issue.issueTracker === "fp")
+                  .map((issue) => [issue.nativeId, issue.issueNumber]),
+              )
+              const numbered = yield* fp.numberReadyIssues(
+                project,
+                discovered,
+                { floor, held },
+              )
+              return {
+                remoteIssues: fpReadyLabeledIssues(numbered),
+                authorScope,
+              }
+            })
           case "github":
           case "gitlab":
           case "azure-devops": {

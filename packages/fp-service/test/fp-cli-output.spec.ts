@@ -1,12 +1,15 @@
 import {
   classifyFpFailure,
   fpIssueLabels,
+  fpIssueNumber,
   parseFpAuthStatus,
   parseFpCommentList,
   parseFpIssueList,
   parseFpIssueShow,
   parseFpProjectList,
+  parseFpProjectPrefix,
   parseFpProjectRemote,
+  parseFpRegisteredProperties,
   parseFpRegisteredStatuses,
   parseFpVersion,
 } from "../src/lib/fp-cli-output.js"
@@ -45,6 +48,63 @@ const LIST_OUTPUT = JSON.stringify({
     },
   ],
 })
+
+// fp 0.25.0 (a381766), captured 2026-10-04 from scratch projects with the
+// rfa-number extension: the first two from one project, the third (an Issue
+// with no properties set) from an earlier probe the same day.
+const LIST_OUTPUT_WITH_PROPERTIES = `{
+  "issues": [
+    {
+      "id": "mvgclaogbqkdygwpfzcqtwxxaxitmcve",
+      "shortId": "mvgclaog",
+      "title": "A",
+      "description": "",
+      "status": "todo",
+      "priority": null,
+      "parent": null,
+      "dependencies": [],
+      "createdAt": "2026-10-04T18:47:55.827Z",
+      "updatedAt": "2026-10-04T18:47:58.087Z",
+      "properties": {
+        "labels": [
+          "ready-for-agent"
+        ],
+        "rfa-number": "3"
+      }
+    },
+    {
+      "id": "ikuqlrgaavpgqwjrwmulpbukipykahhw",
+      "shortId": "ikuqlrga",
+      "title": "B",
+      "description": "",
+      "status": "todo",
+      "priority": null,
+      "parent": null,
+      "dependencies": [],
+      "createdAt": "2026-10-04T18:47:56.113Z",
+      "updatedAt": "2026-10-04T18:47:57.275Z",
+      "properties": {
+        "rfa-number": "2",
+        "labels": [
+          "ready-for-agent"
+        ]
+      }
+    },
+    {
+      "id": "obwfqqhubdrcymnultskhqgxlmzxgupr",
+      "shortId": "obwfqqhu",
+      "title": "C",
+      "description": "",
+      "status": "todo",
+      "priority": null,
+      "parent": null,
+      "dependencies": [],
+      "createdAt": "2026-10-04T16:09:54.586Z",
+      "updatedAt": "2026-10-04T16:09:54.586Z",
+      "properties": {}
+    }
+  ]
+}`
 
 const SHOW_OUTPUT = JSON.stringify({
   id: "sxflialvmviogismmsczmwrvnsdbpnrb",
@@ -95,14 +155,78 @@ describe("fp issue list parsing", () => {
     expect(issues[1]?.parent).toBeNull()
   })
 
-  test("list output carries no properties, so labels cannot be read from it", () => {
+  test("list output of builds before a381766 carries no properties", () => {
     const issues = parseFpIssueList(LIST_OUTPUT)
-    expect("properties" in (issues[0] as object)).toBe(false)
+    expect(issues[0]?.properties).toBeUndefined()
+  })
+
+  test("reads labels and the rfa-number from list properties (build a381766)", () => {
+    const issues = parseFpIssueList(LIST_OUTPUT_WITH_PROPERTIES)
+    expect(issues.map(fpIssueLabels)).toEqual([
+      ["ready-for-agent"],
+      ["ready-for-agent"],
+      [],
+    ])
+    expect(issues.map(fpIssueNumber)).toEqual([
+      { kind: "number", number: 3 },
+      { kind: "number", number: 2 },
+      { kind: "none" },
+    ])
   })
 
   test("rejects output that is not the list shape", () => {
     expect(() => parseFpIssueList("[]")).toThrow()
     expect(() => parseFpIssueList("not json")).toThrow()
+  })
+})
+
+describe("fp rfa-number property", () => {
+  const withNumber = (raw: string | null | undefined) =>
+    parseFpIssueList(
+      JSON.stringify({
+        issues: [
+          {
+            id: "a".repeat(32),
+            shortId: "aaaaaaaa",
+            title: "A",
+            status: "todo",
+            createdAt: "2026-10-04T18:47:55.827Z",
+            updatedAt: "2026-10-04T18:47:58.087Z",
+            properties: raw === undefined ? {} : { "rfa-number": raw },
+          },
+        ],
+      }),
+    )[0] as Parameters<typeof fpIssueNumber>[0]
+
+  test("absent, null and empty are no number", () => {
+    for (const raw of [undefined, null, ""]) {
+      expect(fpIssueNumber(withNumber(raw))).toEqual({ kind: "none" })
+    }
+  })
+
+  test("a positive integer is the number", () => {
+    expect(fpIssueNumber(withNumber("1"))).toEqual({
+      kind: "number",
+      number: 1,
+    })
+    expect(fpIssueNumber(withNumber("1500"))).toEqual({
+      kind: "number",
+      number: 1500,
+    })
+  })
+
+  test("anything else is invalid, not none, so it is never overwritten", () => {
+    for (const raw of [
+      "0",
+      "-3",
+      "07",
+      "1.5",
+      "12a",
+      " 4",
+      "99999999999999999999",
+    ]) {
+      expect(fpIssueNumber(withNumber(raw))).toEqual({ kind: "invalid", raw })
+    }
   })
 })
 
@@ -210,6 +334,14 @@ describe("fp failure classification", () => {
       ),
     ).toBe("invalid_status")
     expect(classifyFpFailure("segfault")).toBe("unknown")
+  })
+
+  test("recognises a property the project does not register (captured 2026-10-04, stderr)", () => {
+    expect(
+      classifyFpFailure(
+        "Invalid value for extension property 'rfa-number': Property is not registered\n",
+      ),
+    ).toBe("property_not_registered")
   })
 
   test("recognises a comment that no longer exists", () => {
@@ -326,6 +458,37 @@ const GUIDE_OUTSIDE_PROJECT = [
   "- Not in an fp project. Run `fp init` first.",
   "",
 ].join("\n")
+
+describe("parseFpProjectPrefix", () => {
+  test("reads the display-id prefix", () => {
+    expect(parseFpProjectPrefix(GUIDE_OUTPUT)).toBe("MC")
+  })
+
+  test("outside a project there is none", () => {
+    expect(parseFpProjectPrefix(GUIDE_OUTSIDE_PROJECT)).toBeNull()
+  })
+})
+
+describe("parseFpRegisteredProperties", () => {
+  test("reads the property keys without their kinds", () => {
+    expect(parseFpRegisteredProperties(GUIDE_OUTPUT)).toEqual([
+      "labels",
+      "workstation",
+    ])
+  })
+
+  test("sees rfa-number where its extension is loaded (captured 2026-10-04)", () => {
+    expect(
+      parseFpRegisteredProperties(
+        "- Other registered properties: labels (multiselect), rfa-number (text)\n- Loaded extensions: labels, rfa-number\n",
+      ),
+    ).toEqual(["labels", "rfa-number"])
+  })
+
+  test("a guide without the line registers no properties", () => {
+    expect(parseFpRegisteredProperties(GUIDE_OUTSIDE_PROJECT)).toEqual([])
+  })
+})
 
 describe("parseFpRegisteredStatuses", () => {
   test("reads the registered statuses in fp's order", () => {

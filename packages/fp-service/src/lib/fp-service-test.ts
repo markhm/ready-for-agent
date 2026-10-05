@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import type { FpRequestError } from "./errors.js"
 import type { FpRegisteredProject } from "./fp-cli-output.js"
-import { FpService } from "./fp-service.js"
+import { type FpNumberingContext, FpService } from "./fp-service.js"
 import type {
   FpIssue,
   FpIssueSnapshot,
@@ -21,6 +21,14 @@ export const defaultFpIssueSnapshot: FpIssueSnapshot = {
 export interface FpServiceTestFixture {
   readonly operatorLogin?: string
   readonly issues?: readonly FpIssue[]
+  readonly listReadyIssues?: (
+    options: FpProjectOptions,
+  ) => Effect.Effect<readonly FpIssue[], FpRequestError>
+  readonly numberReadyIssues?: (
+    options: FpProjectOptions,
+    issues: readonly FpIssue[],
+    harness?: FpNumberingContext,
+  ) => Effect.Effect<readonly FpIssue[], FpRequestError>
   readonly issue?: FpIssueSnapshot
   readonly getIssue?: (
     options: FpProjectOptions,
@@ -43,6 +51,47 @@ export interface FpServiceTestFixture {
   readonly error?: FpRequestError
 }
 
+/**
+ * The default numbering: Issues without a number get the next ones after
+ * the highest in the batch or the floor, in order, and references follow.
+ */
+const numberInMemory = (
+  issues: readonly FpIssue[],
+  floor: number,
+): readonly FpIssue[] => {
+  const numbers = new Map<string, number>()
+  let highest = floor
+  for (const issue of issues) {
+    if (issue.number !== null) {
+      numbers.set(issue.nativeId, issue.number)
+      highest = Math.max(highest, issue.number)
+    }
+  }
+  for (const issue of issues) {
+    if (issue.number === null) {
+      highest += 1
+      numbers.set(issue.nativeId, highest)
+    }
+  }
+  const numberOf = (nativeId: string, fallback: number | null) =>
+    numbers.get(nativeId) ?? fallback
+  return issues.map((issue) => ({
+    ...issue,
+    number: numberOf(issue.nativeId, issue.number),
+    parent:
+      issue.parent === null
+        ? null
+        : {
+            ...issue.parent,
+            number: numberOf(issue.parent.nativeId, issue.parent.number),
+          },
+    blockedBy: issue.blockedBy.map((blocker) => ({
+      ...blocker,
+      number: numberOf(blocker.nativeId, blocker.number),
+    })),
+  }))
+}
+
 /** In-memory stand-in for lifecycle and reconciler tests. */
 export const makeFpServiceTest = (
   fixture: FpServiceTestFixture = {},
@@ -58,8 +107,16 @@ export const makeFpServiceTest = (
       failOr(() =>
         Effect.succeed(fixture.operatorLogin ?? "fp-user@example.com"),
       ),
-    listReadyIssues: () =>
-      failOr(() => Effect.succeed([...(fixture.issues ?? [])])),
+    listReadyIssues: (options) =>
+      fixture.listReadyIssues !== undefined
+        ? fixture.listReadyIssues(options)
+        : failOr(() => Effect.succeed([...(fixture.issues ?? [])])),
+    numberReadyIssues: (options, issues, harness) =>
+      fixture.numberReadyIssues !== undefined
+        ? fixture.numberReadyIssues(options, issues, harness)
+        : failOr(() =>
+            Effect.succeed(numberInMemory(issues, harness?.floor ?? 0)),
+          ),
     getIssue: (options, issueId) =>
       fixture.getIssue !== undefined
         ? fixture.getIssue(options, issueId)

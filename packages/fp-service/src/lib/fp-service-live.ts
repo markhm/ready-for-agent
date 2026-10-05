@@ -1,25 +1,33 @@
 import { access, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
-import { Duration, Effect, Layer, Stream } from "effect"
+import { Duration, Effect, Layer, Semaphore, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { FpRequestError } from "./errors.js"
 import {
+  FP_NUMBER_PROPERTY,
   type FpComment,
   type FpListIssue,
   type FpShowIssue,
   classifyFpFailure,
   fpIssueLabels,
+  fpIssueNumber,
   parseFpAuthStatus,
   parseFpCommentList,
   parseFpIssueList,
   parseFpIssueShow,
   parseFpProjectList,
+  parseFpProjectPrefix,
   parseFpProjectRemote,
+  parseFpRegisteredProperties,
   parseFpRegisteredStatuses,
   parseFpVersion,
 } from "./fp-cli-output.js"
-import { FpService, type FpServiceShape } from "./fp-service.js"
+import {
+  type FpNumberingContext,
+  FpService,
+  type FpServiceShape,
+} from "./fp-service.js"
 import {
   FP_CLI_COMMAND,
   FP_READY_LABEL,
@@ -163,6 +171,10 @@ export const makeFpService = (
   const command = options.command ?? FP_CLI_COMMAND
   const timeout = options.timeout ?? FP_CLI_TIMEOUT
   const showCache = new Map<string, ShowCacheEntry>()
+  // One allocation at a time: refresh can be started by a queued job and by
+  // polling, and two allocations reading the same highest number would
+  // hand it out twice (ADR 0074's single allocator).
+  const numbering = Semaphore.makeUnsafe(1)
 
   const runFp = Effect.fn("FpService.runFp")(function* (
     cwd: string,
@@ -243,7 +255,9 @@ export const makeFpService = (
               ? "the comment no longer exists"
               : kind === "invalid_status"
                 ? "the status is not registered in this fp project"
-                : `fp exited with code ${result.exitCode}`
+                : kind === "property_not_registered"
+                  ? `the fp project does not register the ${FP_NUMBER_PROPERTY} property; install the ready-for-agent rfa-number fp extension`
+                  : `fp exited with code ${result.exitCode}`
       return yield* requestError(`Failed ${describe}: ${detail}.`, {
         ...result,
         kind,
@@ -378,10 +392,16 @@ export const makeFpService = (
     const stateOf = (status: string) => fpIssueState(status, projectOptions)
     const remote = yield* projectRemote(cwd)
 
-    // One list call gives status, parent, dependencies and updatedAt for
-    // every Issue; hierarchy and blocker facts come from here, never from
-    // extra show calls.
+    // One list call gives status, parent, dependencies, labels, number and
+    // updatedAt for every Issue; eligibility, hierarchy and blocker facts
+    // come from here, never from extra show calls.
     const all = yield* listIssues(cwd)
+    if (all.some((issue) => issue.properties === undefined)) {
+      return yield* requestError(
+        "This fp build lists Issues without their properties, so labels and numbers cannot be read. Run `fp update`.",
+        { kind: "outdated_cli" },
+      )
+    }
     const byId = new Map(all.map((issue) => [issue.id, issue]))
     const childrenOf = new Map<string, FpListIssue[]>()
     for (const issue of all) {
@@ -399,13 +419,13 @@ export const makeFpService = (
     const candidates = all.filter(
       (issue) =>
         stateOf(issue.status) === "OPEN" &&
-        (candidateStatuses === null || candidateStatuses.has(issue.status)),
+        (candidateStatuses === null || candidateStatuses.has(issue.status)) &&
+        fpIssueLabels(issue).includes(readyLabel),
     )
 
-    // Labels are only visible through show; inspect each candidate, cached
-    // by updatedAt so an unchanged Issue costs nothing on the next poll.
-    // Only the labels, title, body and author come from show; parent and
-    // dependencies are taken from this poll's list entry.
+    // Only the display id, title, body and author need show, and only for
+    // the Ready candidates; cached by updatedAt so an unchanged Issue costs
+    // nothing on the next poll. Everything else comes from this poll's list.
     const shown = yield* Effect.forEach(
       candidates,
       (listed) => showCached(cwd, listed),
@@ -419,12 +439,15 @@ export const makeFpService = (
     }
     const ready = candidates.flatMap((listed, index) => {
       const issue = shown[index]
-      return issue !== undefined &&
-        issue !== null &&
-        fpIssueLabels(issue).includes(readyLabel)
-        ? [{ listed, issue }]
-        : []
+      return issue !== undefined && issue !== null ? [{ listed, issue }] : []
     })
+    const numberOf = (listed: FpListIssue | undefined): number | null => {
+      if (listed === undefined) {
+        return null
+      }
+      const number = fpIssueNumber(listed)
+      return number.kind === "number" ? number.number : null
+    }
 
     // A reference to an Issue we did not show (a blocker, an absent parent)
     // gets its display id from the cache when we have shown it before, else
@@ -449,7 +472,12 @@ export const makeFpService = (
         (listed !== undefined && prefix !== null
           ? `${prefix}-${listed.shortId}`
           : nativeId)
-      return { nativeId, displayId, url: fpIssueUrl(remote, nativeId) }
+      return {
+        nativeId,
+        displayId,
+        url: fpIssueUrl(remote, nativeId),
+        number: numberOf(listed),
+      }
     }
 
     const parentFor = Effect.fn("FpService.parentFor")(function* (
@@ -477,8 +505,9 @@ export const makeFpService = (
         nativeId: parentId,
         displayId: shownParent.displayId,
         url: fpIssueUrl(remote, parentId),
+        number: numberOf(listedParent),
         state: stateOf(listedParent.status),
-        isReadyLabeled: fpIssueLabels(shownParent).includes(readyLabel),
+        isReadyLabeled: fpIssueLabels(listedParent).includes(readyLabel),
       }
       const siblings = [...(childrenOf.get(parentId) ?? [])].sort((a, b) =>
         a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
@@ -492,6 +521,7 @@ export const makeFpService = (
       const { parent, parentPosition } = yield* parentFor(listed)
       issues.push({
         nativeId: issue.id,
+        number: numberOf(listed),
         displayId: issue.displayId,
         title: issue.title,
         body: issue.description ?? "",
@@ -501,12 +531,19 @@ export const makeFpService = (
         status: listed.status,
         state: stateOf(listed.status),
         author: issue.author ?? null,
-        labels: fpIssueLabels(issue),
+        labels: fpIssueLabels(listed),
         parent,
         parentPosition,
         hasChildren: (childrenOf.get(issue.id)?.length ?? 0) > 0,
         hierarchySupported: true,
-        blockedBy: (listed.dependencies ?? []).map(referenceFor),
+        // A finished blocker no longer blocks, as on the Forges; one missing
+        // from the list (deleted, foreign) still does.
+        blockedBy: (listed.dependencies ?? [])
+          .filter((blockerId) => {
+            const blocker = byId.get(blockerId)
+            return blocker === undefined || stateOf(blocker.status) === "OPEN"
+          })
+          .map(referenceFor),
       })
     }
     // fp short ids are random letters, so creation order is the meaningful
@@ -517,6 +554,139 @@ export const makeFpService = (
         left.displayId.localeCompare(right.displayId),
     )
   })
+
+  const writeIssueNumber = Effect.fn("FpService.writeIssueNumber")(function* (
+    cwd: string,
+    issueId: string,
+    number: number,
+  ) {
+    const describe = `numbering fp issue ${issueId} as ${number}`
+    yield* runFpOk(
+      cwd,
+      [
+        "issue",
+        "update",
+        issueId,
+        "--property",
+        `${FP_NUMBER_PROPERTY}=${number}`,
+      ],
+      describe,
+    )
+    const after = fpIssueNumber(yield* showIssue(cwd, issueId))
+    if (after.kind !== "number" || after.number !== number) {
+      return yield* requestError(
+        `fp reported ${describe}, but the Issue reads back without that number.`,
+        { kind: "write_not_applied" },
+      )
+    }
+  })
+
+  const numberReadyIssues = Effect.fn("FpService.numberReadyIssues")(
+    function* (
+      projectOptions: FpProjectOptions,
+      issues: readonly FpIssue[],
+      harness: FpNumberingContext = {},
+    ) {
+      const floor = harness.floor ?? 0
+      const cwd = projectOptions.projectDirectory
+      // A fresh list, not the discovery poll's: the numbers in fp are the
+      // record, and another write may have landed since.
+      const all = yield* listIssues(cwd)
+      if (all.some((issue) => issue.properties === undefined)) {
+        return yield* requestError(
+          "This fp build lists Issues without their properties, so numbers cannot be read. Run `fp update`.",
+          { kind: "outdated_cli" },
+        )
+      }
+      // An Issue outside the Ready set is named as fp displays it,
+      // `<prefix>-<shortId>`, with the prefix a Ready Issue's display id
+      // carries before its own short id.
+      const prefixFromReady = (() => {
+        for (const issue of issues) {
+          const listed = all.find(
+            (candidate) => candidate.id === issue.nativeId,
+          )
+          const suffix = listed === undefined ? null : `-${listed.shortId}`
+          if (suffix !== null && issue.displayId.endsWith(suffix)) {
+            return issue.displayId.slice(0, -suffix.length)
+          }
+        }
+        return null
+      })()
+      // Without a Ready Issue to read it from, fp guide names the prefix;
+      // asked only when an Issue must be named in an error.
+      const namer = Effect.gen(function* () {
+        const prefix =
+          prefixFromReady ??
+          (yield* runFp(cwd, ["guide"]).pipe(
+            Effect.map((result) =>
+              parseFpProjectPrefix(combinedOutput(result)),
+            ),
+            Effect.orElseSucceed(() => null),
+          ))
+        return (listed: FpListIssue) =>
+          issues.find((issue) => issue.nativeId === listed.id)?.displayId ??
+          (prefix === null ? listed.shortId : `${prefix}-${listed.shortId}`)
+      })
+      const numbers = new Map<string, number>()
+      const holders = new Map<number, FpListIssue>()
+      for (const listed of all) {
+        const value = fpIssueNumber(listed)
+        if (value.kind === "invalid") {
+          const nameOf = yield* namer
+          return yield* requestError(
+            `fp issue ${nameOf(listed)} has ${FP_NUMBER_PROPERTY} "${value.raw}", which is not a positive integer; correct or clear it in fp.`,
+            { kind: "invalid_issue_number" },
+          )
+        }
+        if (value.kind === "number") {
+          const holder = holders.get(value.number)
+          if (holder !== undefined) {
+            const nameOf = yield* namer
+            const kept = [holder, listed].find(
+              (candidate) => harness.held?.get(candidate.id) === value.number,
+            )
+            const other = kept === holder ? listed : holder
+            return yield* requestError(
+              kept === undefined
+                ? `fp issues ${nameOf(holder)} and ${nameOf(listed)} both have ${FP_NUMBER_PROPERTY} ${value.number}; clear one of them in fp.`
+                : `fp issues ${nameOf(holder)} and ${nameOf(listed)} both have ${FP_NUMBER_PROPERTY} ${value.number}; the harness knows ${nameOf(kept)} by that number, so clear ${nameOf(other)}'s in fp.`,
+              { kind: "duplicate_issue_number" },
+            )
+          }
+          holders.set(value.number, listed)
+          numbers.set(listed.id, value.number)
+        }
+      }
+      let highest = Math.max(floor, ...holders.keys())
+      const listedIds = new Set(all.map((listed) => listed.id))
+      for (const issue of issues) {
+        // An Issue that left the project since discovery is not numbered.
+        if (numbers.has(issue.nativeId) || !listedIds.has(issue.nativeId)) {
+          continue
+        }
+        highest += 1
+        yield* writeIssueNumber(cwd, issue.nativeId, highest)
+        numbers.set(issue.nativeId, highest)
+      }
+      const numberOf = (nativeId: string) => numbers.get(nativeId) ?? null
+      return issues.map(
+        (issue): FpIssue => ({
+          ...issue,
+          number: numberOf(issue.nativeId),
+          parent:
+            issue.parent === null
+              ? null
+              : { ...issue.parent, number: numberOf(issue.parent.nativeId) },
+          blockedBy: issue.blockedBy.map((blocker) => ({
+            ...blocker,
+            number: numberOf(blocker.nativeId),
+          })),
+        }),
+      )
+    },
+    (effect) => numbering.withPermits(1)(effect),
+  )
 
   const getIssue = Effect.fn("FpService.getIssue")(function* (
     projectOptions: FpProjectOptions,
@@ -649,6 +819,30 @@ export const makeFpService = (
     if (remote._tag === "failed") {
       return { _tag: "cli_error" as const, message: remote.message }
     }
+    const guide = yield* runFpOk(
+      projectDirectory,
+      ["guide"],
+      "reading the fp project's registered properties",
+    ).pipe(
+      Effect.map((result) => ({ _tag: "read" as const, result })),
+      Effect.catch((error) =>
+        Effect.succeed({ _tag: "failed" as const, message: error.message }),
+      ),
+    )
+    if (guide._tag === "failed") {
+      return { _tag: "cli_error" as const, message: guide.message }
+    }
+    // fp prints the guide on stderr.
+    if (
+      !parseFpRegisteredProperties(combinedOutput(guide.result)).includes(
+        FP_NUMBER_PROPERTY,
+      )
+    ) {
+      return {
+        _tag: "number_property_missing" as const,
+        message: `The fp project does not register the ${FP_NUMBER_PROPERTY} property, where the harness keeps each Issue's number; install the ready-for-agent rfa-number fp extension.`,
+      }
+    }
     return { _tag: "ready" as const, version, remote: remote.value }
   })
 
@@ -739,6 +933,7 @@ export const makeFpService = (
   return {
     getAuthenticatedUserLogin,
     listReadyIssues,
+    numberReadyIssues,
     getIssue,
     listRegisteredProjects,
     listProjectStatuses,
