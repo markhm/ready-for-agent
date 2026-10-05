@@ -1,12 +1,12 @@
 import { Effect } from "effect"
 import type { RepositoryRecord } from "@ready-for-agent/db-service"
 import {
-  FP_DEFAULT_CLOSED_STATUSES,
   FpNotConfiguredError,
   type FpProjectOptions,
   type FpRequestError,
   FpService,
   fpMilestoneMarker,
+  fpProjectOptionsFromSettings,
 } from "@ready-for-agent/fp-service"
 import {
   type IssueSource,
@@ -23,7 +23,7 @@ export type FpIssueSource = IssueSource & { readonly tracker: "fp" }
 
 type FpProject =
   | { readonly _tag: "project"; readonly options: FpProjectOptions }
-  | { readonly _tag: "left" }
+  | { readonly _tag: "left"; readonly why: string }
 
 /**
  * The fp project a Work Item's tracker writes go to. A Repository still on
@@ -34,14 +34,19 @@ type FpProject =
 const fpProjectFor = (
   repository: RepositoryRecord | undefined,
 ): Effect.Effect<FpProject, FpNotConfiguredError> => {
+  if (repository === undefined) {
+    return Effect.succeed({ _tag: "left", why: "the Repository was removed" })
+  }
   if (
-    repository === undefined ||
     describeIssueTracker(repository.issueTracker).settings.kind !== "fp_project"
   ) {
-    return Effect.succeed({ _tag: "left" })
+    return Effect.succeed({
+      _tag: "left",
+      why: "the Repository no longer uses fp",
+    })
   }
-  const projectDirectory = repository.fpProjectDirectory?.trim() ?? ""
-  if (projectDirectory === "") {
+  const options = fpProjectOptionsFromSettings(repository)
+  if (options === null) {
     return Effect.fail(
       new FpNotConfiguredError({
         repositoryId: repository.id,
@@ -50,25 +55,17 @@ const fpProjectFor = (
       }),
     )
   }
-  const doneStatus = repository.fpDoneStatus?.trim() ?? ""
-  return Effect.succeed({
-    _tag: "project",
-    options: {
-      projectDirectory,
-      closedStatuses: [
-        ...new Set([
-          ...FP_DEFAULT_CLOSED_STATUSES,
-          ...(doneStatus === "" ? [] : [doneStatus]),
-        ]),
-      ],
-    },
-  })
+  return Effect.succeed({ _tag: "project", options })
 }
 
-const skipped = (milestone: string, input: { readonly workItemId: string }) =>
-  Effect.logInfo(
-    `Skipped the fp ${milestone}: the Repository no longer uses fp`,
-  ).pipe(Effect.annotateLogs({ workItemId: input.workItemId }))
+const skipped = (
+  milestone: string,
+  project: { readonly why: string },
+  input: { readonly workItemId: string },
+) =>
+  Effect.logInfo(`Skipped the fp ${milestone}: ${project.why}`).pipe(
+    Effect.annotateLogs({ workItemId: input.workItemId }),
+  )
 
 /** In Progress and the work-started milestone when implementation starts. */
 export const notifyFpWorkStarted = (input: {
@@ -79,7 +76,7 @@ export const notifyFpWorkStarted = (input: {
   Effect.gen(function* () {
     const project = yield* fpProjectFor(input.repository)
     if (project._tag === "left") {
-      return yield* skipped("work-started milestone", input)
+      return yield* skipped("work-started milestone", project, input)
     }
     const inProgress = input.repository.fpInProgressStatus?.trim() ?? ""
     if (inProgress === "") {
@@ -114,7 +111,7 @@ export const notifyFpPullRequest = (input: {
   Effect.gen(function* () {
     const project = yield* fpProjectFor(input.repository)
     if (project._tag === "left") {
-      return yield* skipped("pull request milestone", input)
+      return yield* skipped("pull request milestone", project, input)
     }
     const fp = yield* FpService
     const marker = fpMilestoneMarker("pull-request", input.workItemId)
@@ -136,7 +133,7 @@ export const notifyFpHumanAttention = (input: {
   Effect.gen(function* () {
     const project = yield* fpProjectFor(input.repository)
     if (project._tag === "left") {
-      return yield* skipped("human attention milestone", input)
+      return yield* skipped("human attention milestone", project, input)
     }
     const fp = yield* FpService
     const marker = fpMilestoneMarker("human-attention", input.workItemId)

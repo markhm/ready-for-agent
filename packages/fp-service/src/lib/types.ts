@@ -30,6 +30,32 @@ export const fpMilestoneMarker = (
   workItemId: string,
 ): string => `ready-for-agent:${kind}:${workItemId}`
 
+/**
+ * A Repository's fp settings as project options, the one place discovery
+ * and execution agree on: the Repository's Done status closes an Issue as
+ * fp's own done and rejected do, whatever the project calls it. Null when
+ * no project directory is set.
+ */
+export const fpProjectOptionsFromSettings = (settings: {
+  readonly fpProjectDirectory: string | null
+  readonly fpDoneStatus: string | null
+}): FpProjectOptions | null => {
+  const projectDirectory = settings.fpProjectDirectory?.trim() ?? ""
+  if (projectDirectory === "") {
+    return null
+  }
+  const doneStatus = settings.fpDoneStatus?.trim() ?? ""
+  return {
+    projectDirectory,
+    closedStatuses: [
+      ...new Set([
+        ...FP_DEFAULT_CLOSED_STATUSES,
+        ...(doneStatus === "" ? [] : [doneStatus]),
+      ]),
+    ],
+  }
+}
+
 /** The one place that turns an fp status into OPEN or CLOSED. */
 export const fpIssueState = (
   status: string,
