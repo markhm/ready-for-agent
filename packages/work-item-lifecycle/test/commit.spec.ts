@@ -517,6 +517,39 @@ describe("publication copy parsing", () => {
     expect(fallback.body).not.toContain("Closes #123")
   })
 
+  it("uses an fp Issue reference instead of a GitHub Closes line", () => {
+    const source = {
+      tracker: "fp" as const,
+      nativeId: "miygcidmabcdefghijklmnopqrstuvwx",
+      displayId: "MC-miygcidm",
+      url: "fp://issue?workspace=mhm&project=proj&id=miygcidmabcdefghijklmnopqrstuvwx",
+    }
+    // 7 is the harness-allocated rfa-number (ADR 0074): it must never turn
+    // into a GitHub closing reference.
+    expect(
+      normalizePublicationCopy(
+        {
+          title: "feat: fp execution",
+          body: "Implements the fp Issue in GitHub.\n\nCloses #7\n\nfp: MC-miygcidm",
+        },
+        7,
+        source,
+      ),
+    ).toEqual({
+      title: "feat: fp execution",
+      body: `Implements the fp Issue in GitHub.\n\nfp: MC-miygcidm\n${source.url}`,
+    })
+    const fallback = buildHarnessPublicationFallbackCopy({
+      issueNumber: 7,
+      issueTitle: null,
+      workItemId: "wi-fp",
+      issueSource: source,
+    })
+    expect(fallback.title).toBe("Implement MC-miygcidm")
+    expect(fallback.body).toContain("fp: MC-miygcidm")
+    expect(fallback.body).not.toContain("Closes #7")
+  })
+
   it("formats commit message from title and body", () => {
     expect(
       formatPublicationCommitMessage({

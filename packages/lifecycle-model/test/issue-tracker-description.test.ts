@@ -64,12 +64,10 @@ describe("Issue Tracker descriptions", () => {
     expect(fp.credential).toEqual({ kind: "none" })
     expect(fp.issueIdentity).toEqual({ kind: "native_id" })
     expect(fp.settings).toEqual({ kind: "fp_project" })
-    for (const behaviour of [
-      fp.presentation,
-      fp.pullRequestReference,
-      fp.afterConfirmedMerge,
-      fp.parentImplementAll,
-    ]) {
+    // Implement and the pull request present fp as Linear's are presented.
+    expect(fp.presentation).toEqual({ kind: "tracker_issue" })
+    expect(fp.pullRequestReference).toEqual({ kind: "tracker_identity" })
+    for (const behaviour of [fp.afterConfirmedMerge, fp.parentImplementAll]) {
       expect(behaviour).toEqual({ kind: "not_implemented" })
     }
   })
@@ -91,8 +89,8 @@ describe("Issue Tracker descriptions", () => {
   })
 
   it("treats reaching a missing behaviour as a defect", () => {
-    expect(() => behaviourNotImplemented("fp", "presentation")).toThrow(
-      "Issue Tracker fp has no presentation yet and is not selectable",
+    expect(() => behaviourNotImplemented("fp", "afterConfirmedMerge")).toThrow(
+      "Issue Tracker fp has no afterConfirmedMerge yet and is not selectable",
     )
   })
 })
