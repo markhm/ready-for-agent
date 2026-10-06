@@ -14,6 +14,7 @@ import {
   type RepositoryRecord,
 } from "@ready-for-agent/db-service"
 import type { CiGateObservation } from "@ready-for-agent/forge-contract"
+import { makeFpServiceTest } from "@ready-for-agent/fp-service"
 import {
   GitHubService,
   type GitHubServiceShape,
@@ -243,6 +244,7 @@ describe("Hold ordinary remote admission during CI failure", () => {
       Layer.provideMerge(
         Layer.succeed(LinearService, defaultLinearServiceShape),
       ),
+      Layer.provideMerge(makeFpServiceTest()),
     ),
     githubLayer,
     Layer.succeed(KeymaxxerService, {
@@ -293,6 +295,7 @@ describe("Hold ordinary remote admission during CI failure", () => {
         }),
     }),
     Layer.succeed(LinearService, defaultLinearServiceShape),
+    makeFpServiceTest(),
     Layer.succeed(LocalGit, {
       inspect: (path) =>
         Effect.succeed({

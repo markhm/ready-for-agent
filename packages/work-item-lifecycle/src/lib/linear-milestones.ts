@@ -11,6 +11,12 @@ import {
   LinearService,
   linearMilestoneMarker,
 } from "@ready-for-agent/linear-service"
+import {
+  completionComment,
+  humanAttentionComment,
+  pullRequestComment,
+  workStartedComment,
+} from "./milestone-copy.js"
 
 export const LINEAR_MERGE_COMPLETION_SUMMARY =
   ISSUE_TRACKER_DESCRIPTIONS.linear.afterConfirmedMerge.completionSummary
@@ -18,15 +24,9 @@ export const LINEAR_MERGE_COMPLETION_SUMMARY =
 /** An Original Issue Source already dispatched to Linear. */
 export type LinearIssueSource = IssueSource & { readonly tracker: "linear" }
 
-const commentBody = (prose: readonly string[], marker: string): string =>
-  `${prose.filter((line) => line.length > 0).join("\n")}\n\n${marker}`
-
 export const linearWorkStartedComment = (workItemId: string): string =>
-  commentBody(
-    [
-      "Ready for Agent started implementation for this Issue.",
-      `Work Item ${workItemId}.`,
-    ],
+  workStartedComment(
+    workItemId,
     linearMilestoneMarker("work-started", workItemId),
   )
 
@@ -34,11 +34,8 @@ export const linearPullRequestComment = (
   workItemId: string,
   pullRequestUrl: string,
 ): string =>
-  commentBody(
-    [
-      "Ready for Agent opened a GitHub pull request for this Issue:",
-      pullRequestUrl,
-    ],
+  pullRequestComment(
+    pullRequestUrl,
     linearMilestoneMarker("pull-request", workItemId),
   )
 
@@ -46,13 +43,8 @@ export const linearHumanAttentionComment = (
   workItemId: string,
   reason: string,
 ): string =>
-  commentBody(
-    [
-      "Ready for Agent needs human attention:",
-      reason.trim() === ""
-        ? "A human decision is required to continue."
-        : reason.trim(),
-    ],
+  humanAttentionComment(
+    reason,
     linearMilestoneMarker("human-attention", workItemId),
   )
 
@@ -60,7 +52,7 @@ export const linearCompletionComment = (
   workItemId: string,
   summary: string,
 ): string =>
-  commentBody([summary.trim()], linearMilestoneMarker("completion", workItemId))
+  completionComment(summary, linearMilestoneMarker("completion", workItemId))
 
 export const githubPullRequestUrl = (input: {
   readonly forgeHost: string

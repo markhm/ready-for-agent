@@ -1,5 +1,9 @@
 import { Schema } from "effect"
 import type {
+  FpNotConfiguredError,
+  FpRequestError,
+} from "@ready-for-agent/fp-service"
+import type {
   LinearNotConfiguredError,
   LinearRequestError,
 } from "@ready-for-agent/linear-service"
@@ -64,3 +68,5 @@ export type ImplementError =
   | ImplementOpenCodeError
   | LinearRequestError
   | LinearNotConfiguredError
+  | FpRequestError
+  | FpNotConfiguredError

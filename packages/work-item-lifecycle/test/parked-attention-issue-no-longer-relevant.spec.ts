@@ -16,6 +16,7 @@ import {
   WorkItemLifecycleLive,
   stubActiveAgentBackendLayer,
   stubAzureDevOpsServiceLayer,
+  stubFpServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
   stubLinearServiceLayer,
@@ -79,6 +80,7 @@ describe("parked Attention when the Issue is no longer Relevant", () => {
       Layer.provideMerge(stubGitLabServiceLayer()),
       Layer.provideMerge(stubAzureDevOpsServiceLayer()),
       Layer.provideMerge(stubLinearServiceLayer()),
+      Layer.provideMerge(stubFpServiceLayer()),
       Layer.provideMerge(
         Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
       ),

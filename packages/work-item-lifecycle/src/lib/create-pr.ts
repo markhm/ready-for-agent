@@ -1112,6 +1112,7 @@ export const createPr = (context: LifecycleStepContext) =>
 
     if (repository.forge === "github") {
       yield* notifyPullRequest({
+        repository,
         issueSource: context.issueSource,
         workItemId: context.workItemId,
         pullRequestUrl: githubPullRequestUrl({

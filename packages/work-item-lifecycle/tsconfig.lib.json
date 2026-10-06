@@ -20,6 +20,9 @@
       "path": "../linear-service/tsconfig.lib.json"
     },
     {
+      "path": "../fp-service/tsconfig.lib.json"
+    },
+    {
       "path": "../keymaxxer-service/tsconfig.lib.json"
     },
     {

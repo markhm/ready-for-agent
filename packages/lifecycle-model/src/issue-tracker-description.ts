@@ -184,8 +184,9 @@ export const ISSUE_TRACKER_DESCRIPTIONS = {
     settings: { kind: "fp_project" },
     credential: { kind: "none" },
     issueIdentity: { kind: "native_id" },
-    presentation: NOT_IMPLEMENTED,
-    pullRequestReference: NOT_IMPLEMENTED,
+    // The agent works from the stored Issue text; it never reads fp.
+    presentation: { kind: "tracker_issue" },
+    pullRequestReference: { kind: "tracker_identity" },
     afterConfirmedMerge: NOT_IMPLEMENTED,
     parentImplementAll: NOT_IMPLEMENTED,
     relevancePolicy: trackerOnlyRelevancePolicy,

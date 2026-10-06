@@ -17,6 +17,7 @@ import {
   assessChanges,
   stubActiveAgentBackendLayer,
   stubAzureDevOpsServiceLayer,
+  stubFpServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
   stubLinearServiceLayer,
@@ -122,6 +123,7 @@ describe("Assess Changes lifecycle routes", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
         ),
@@ -286,6 +288,7 @@ describe("Assess Changes lifecycle routes", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
         ),
@@ -420,6 +423,7 @@ describe("Assess Changes lifecycle routes", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
         ),
@@ -591,6 +595,7 @@ describe("Assess Changes lifecycle routes", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
         ),
@@ -785,6 +790,7 @@ describe("Assess Changes lifecycle routes", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
         ),
@@ -1032,6 +1038,7 @@ describe("Assess Changes lifecycle routes", () => {
           Layer.provideMerge(stubGitLabServiceLayer()),
           Layer.provideMerge(stubAzureDevOpsServiceLayer()),
           Layer.provideMerge(stubLinearServiceLayer()),
+          Layer.provideMerge(stubFpServiceLayer()),
           Layer.provideMerge(
             Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
           ),
@@ -1176,6 +1183,7 @@ describe("Assess Changes lifecycle routes", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
         ),
@@ -1316,6 +1324,7 @@ describe("Assess Changes lifecycle routes", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
         ),
@@ -1455,6 +1464,7 @@ describe("Assess Changes lifecycle routes", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
         ),
@@ -1644,6 +1654,7 @@ describe("Assess Changes lifecycle routes", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
         ),

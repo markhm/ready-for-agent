@@ -17,10 +17,10 @@ import {
   resolveForgeIssueOperations,
 } from "@ready-for-agent/forge-contract"
 import {
-  FP_DEFAULT_CLOSED_STATUSES,
   FpNotConfiguredError,
   type FpRequestError,
   FpService,
+  fpProjectOptionsFromSettings,
 } from "@ready-for-agent/fp-service"
 import {
   type GitHubOperationOptions,
@@ -240,27 +240,15 @@ export const IssueReconcilerLive = Layer.effect(
             })
           case "fp":
             return Effect.gen(function* () {
-              const projectDirectory =
-                repository.fpProjectDirectory?.trim() ?? ""
-              if (projectDirectory === "") {
+              const project = fpProjectOptionsFromSettings(repository)
+              if (project === null) {
                 return yield* new FpNotConfiguredError({
                   repositoryId: repository.id,
                   message:
                     "Select an fp project in Repository settings before refreshing Issues",
                 })
               }
-              // The Repository's Done status closes an Issue as fp's own
-              // done and rejected do, whatever the project calls it.
-              const doneStatus = repository.fpDoneStatus?.trim() ?? ""
-              const project = {
-                projectDirectory,
-                closedStatuses: [
-                  ...new Set([
-                    ...FP_DEFAULT_CLOSED_STATUSES,
-                    ...(doneStatus === "" ? [] : [doneStatus]),
-                  ]),
-                ],
-              }
+              const projectDirectory = project.projectDirectory
               // fp authors are email addresses; the operator is the
               // authenticated fp account.
               const authorScope = repository.includeAllIssueAuthors

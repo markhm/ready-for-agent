@@ -19,6 +19,7 @@ import {
   WorkItemTerminalError,
   stubActiveAgentBackendLayer,
   stubAzureDevOpsServiceLayer,
+  stubFpServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
   stubLinearServiceLayer,
@@ -91,6 +92,7 @@ describe("competing Issue-closing PR stop", () => {
       Layer.provideMerge(stubGitLabServiceLayer()),
       Layer.provideMerge(stubAzureDevOpsServiceLayer()),
       Layer.provideMerge(stubLinearServiceLayer()),
+      Layer.provideMerge(stubFpServiceLayer()),
       Layer.provideMerge(
         Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
       ),

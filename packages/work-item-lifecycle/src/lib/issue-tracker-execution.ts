@@ -1,5 +1,10 @@
 import { Effect } from "effect"
 import type { RepositoryRecord } from "@ready-for-agent/db-service"
+import type {
+  FpNotConfiguredError,
+  FpRequestError,
+  FpService,
+} from "@ready-for-agent/fp-service"
 import {
   type IssueSource,
   type IssueTracker,
@@ -10,6 +15,11 @@ import type {
   LinearRequestError,
   LinearService,
 } from "@ready-for-agent/linear-service"
+import {
+  notifyFpHumanAttention,
+  notifyFpPullRequest,
+  notifyFpWorkStarted,
+} from "./fp-milestones.js"
 import {
   completeLinearIssue,
   notifyLinearHumanAttention,
@@ -25,10 +35,12 @@ import {
  */
 const dispatch = <E, R>(
   source: IssueSource | undefined,
-  behaviour: string,
   trackerOnly: {
     readonly linear: (
       source: IssueSource & { readonly tracker: "linear" },
+    ) => Effect.Effect<void, E, R>
+    readonly fp: (
+      source: IssueSource & { readonly tracker: "fp" },
     ) => Effect.Effect<void, E, R>
   },
 ): Effect.Effect<void, E, R> => {
@@ -44,7 +56,7 @@ const dispatch = <E, R>(
     case "linear":
       return trackerOnly.linear({ ...source, tracker })
     case "fp":
-      return Effect.sync(() => behaviourNotImplemented(tracker, behaviour))
+      return trackerOnly.fp({ ...source, tracker })
     default: {
       const _exhaustive: never = tracker
       return _exhaustive
@@ -52,39 +64,49 @@ const dispatch = <E, R>(
   }
 }
 
+type TrackerError =
+  | LinearRequestError
+  | LinearNotConfiguredError
+  | FpRequestError
+  | FpNotConfiguredError
+
 /** In Progress and the work-started milestone when implementation starts. */
 export const notifyWorkStarted = (input: {
   readonly repository: RepositoryRecord
   readonly issueSource: IssueSource | undefined
   readonly workItemId: string
-}): Effect.Effect<
-  void,
-  LinearRequestError | LinearNotConfiguredError,
-  LinearService
-> =>
-  dispatch(input.issueSource, "work-started milestone", {
+}): Effect.Effect<void, TrackerError, LinearService | FpService> =>
+  dispatch<TrackerError, LinearService | FpService>(input.issueSource, {
     linear: (issueSource) => notifyLinearWorkStarted({ ...input, issueSource }),
+    fp: (issueSource) => notifyFpWorkStarted({ ...input, issueSource }),
   })
 
-/** Pull request milestone after the pull request is opened. */
+/**
+ * Pull request milestone after the pull request is opened. The Repository is
+ * undefined when it was removed; trackers that need it then skip the write.
+ */
 export const notifyPullRequest = (input: {
+  readonly repository: RepositoryRecord | undefined
   readonly issueSource: IssueSource | undefined
   readonly workItemId: string
   readonly pullRequestUrl: string
-}): Effect.Effect<void, LinearRequestError, LinearService> =>
-  dispatch(input.issueSource, "pull request milestone", {
+}): Effect.Effect<void, TrackerError, LinearService | FpService> =>
+  dispatch<TrackerError, LinearService | FpService>(input.issueSource, {
     linear: (issueSource) => notifyLinearPullRequest({ ...input, issueSource }),
+    fp: (issueSource) => notifyFpPullRequest({ ...input, issueSource }),
   })
 
 /** Human attention milestone when a Work Item parks for a person. */
 export const notifyHumanAttention = (input: {
+  readonly repository: RepositoryRecord | undefined
   readonly issueSource: IssueSource | undefined
   readonly workItemId: string
   readonly reason: string
-}): Effect.Effect<void, LinearRequestError, LinearService> =>
-  dispatch(input.issueSource, "human attention milestone", {
+}): Effect.Effect<void, TrackerError, LinearService | FpService> =>
+  dispatch<TrackerError, LinearService | FpService>(input.issueSource, {
     linear: (issueSource) =>
       notifyLinearHumanAttention({ ...input, issueSource }),
+    fp: (issueSource) => notifyFpHumanAttention({ ...input, issueSource }),
   })
 
 /**

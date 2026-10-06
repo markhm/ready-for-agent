@@ -79,6 +79,7 @@ import {
   makeWorkItemLifecycleLive,
   stubActiveAgentBackendLayer,
   stubAzureDevOpsServiceLayer,
+  stubFpServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
   stubLinearServiceLayer,
@@ -163,6 +164,7 @@ describe("WorkItemLifecycle", () => {
     Layer.provideMerge(stubGitLabServiceLayer()),
     Layer.provideMerge(stubAzureDevOpsServiceLayer()),
     Layer.provideMerge(stubLinearServiceLayer()),
+    Layer.provideMerge(stubFpServiceLayer()),
     Layer.provideMerge(SuccessfulStepsLive),
     Layer.provideMerge(DbServiceLive),
     Layer.provideMerge(SqliteQueueServiceLive),
@@ -187,6 +189,7 @@ describe("WorkItemLifecycle", () => {
       Layer.provideMerge(stubGitLabServiceLayer(gitlab)),
       Layer.provideMerge(stubAzureDevOpsServiceLayer(azureDevOps)),
       Layer.provideMerge(stubLinearServiceLayer()),
+      Layer.provideMerge(stubFpServiceLayer()),
       Layer.provideMerge(
         Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
       ),
@@ -202,6 +205,7 @@ describe("WorkItemLifecycle", () => {
       Layer.provideMerge(stubGitLabServiceLayer()),
       Layer.provideMerge(stubAzureDevOpsServiceLayer()),
       Layer.provideMerge(stubLinearServiceLayer()),
+      Layer.provideMerge(stubFpServiceLayer()),
       Layer.provideMerge(
         Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
       ),
@@ -603,6 +607,7 @@ describe("WorkItemLifecycle", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(SuccessfulStepsLive),
         Layer.provideMerge(DbServiceLive),
         Layer.provideMerge(
@@ -1138,6 +1143,7 @@ describe("WorkItemLifecycle", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(SuccessfulStepsLive),
         Layer.provideMerge(DbServiceLive),
         Layer.provideMerge(
@@ -1390,6 +1396,7 @@ describe("WorkItemLifecycle", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(SuccessfulStepsLive),
         Layer.provideMerge(DbServiceLive),
         Layer.provideMerge(
@@ -2147,6 +2154,7 @@ describe("WorkItemLifecycle", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(SuccessfulStepsLive),
         Layer.provideMerge(DbServiceLive),
         Layer.provideMerge(NonTransactionalQueueLive),
@@ -9196,6 +9204,7 @@ describe("WorkItemLifecycle", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(SuccessfulStepsLive),
         Layer.provideMerge(DbServiceLive),
         Layer.provideMerge(
@@ -9866,6 +9875,7 @@ describe("WorkItemLifecycle", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(slowSteps)),
         ),
@@ -11164,6 +11174,7 @@ describe("WorkItemLifecycle", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
         ),
@@ -11266,6 +11277,7 @@ describe("WorkItemLifecycle", () => {
         Layer.provideMerge(stubGitLabServiceLayer()),
         Layer.provideMerge(stubAzureDevOpsServiceLayer()),
         Layer.provideMerge(stubLinearServiceLayer()),
+        Layer.provideMerge(stubFpServiceLayer()),
         Layer.provideMerge(
           Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps)),
         ),

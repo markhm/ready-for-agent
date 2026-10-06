@@ -18,6 +18,7 @@ import {
   linearCompletionComment,
   stubActiveAgentBackendLayer,
   stubAzureDevOpsServiceLayer,
+  stubFpServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
   stubLinearServiceLayer,
@@ -114,6 +115,7 @@ const linearLifecycleLayer = (
     Layer.provideMerge(stubGitLabServiceLayer()),
     Layer.provideMerge(stubAzureDevOpsServiceLayer()),
     Layer.provideMerge(stubLinearServiceLayer(linear)),
+    Layer.provideMerge(stubFpServiceLayer()),
     Layer.provideMerge(Layer.succeed(LifecycleSteps, LifecycleSteps.of(steps))),
     Layer.provideMerge(DbServiceLive),
     Layer.provideMerge(SqliteQueueServiceLive),
@@ -359,6 +361,7 @@ describe("Linear Issue execution", () => {
                   }),
               }),
             ),
+            Layer.provideMerge(stubFpServiceLayer()),
             Layer.provideMerge(
               Layer.succeed(LifecycleSteps, LifecycleSteps.of(successfulSteps)),
             ),
@@ -463,6 +466,7 @@ describe("Linear Issue execution", () => {
                   }),
               }),
             ),
+            Layer.provideMerge(stubFpServiceLayer()),
             Layer.provideMerge(
               Layer.succeed(
                 LifecycleSteps,
@@ -578,6 +582,7 @@ describe("Linear Issue execution", () => {
                   ),
               }),
             ),
+            Layer.provideMerge(stubFpServiceLayer()),
             Layer.provideMerge(
               Layer.succeed(
                 LifecycleSteps,
@@ -695,6 +700,7 @@ describe("Linear Issue execution", () => {
             Layer.provideMerge(stubGitLabServiceLayer()),
             Layer.provideMerge(stubAzureDevOpsServiceLayer()),
             Layer.provideMerge(stubLinearServiceLayer()),
+            Layer.provideMerge(stubFpServiceLayer()),
             Layer.provideMerge(
               Layer.succeed(LifecycleSteps, LifecycleSteps.of(successfulSteps)),
             ),

@@ -9,6 +9,7 @@ import {
 } from "@ready-for-agent/agent-backend"
 import { AzureDevOpsService } from "@ready-for-agent/azure-devops-service"
 import { DbService } from "@ready-for-agent/db-service"
+import { FpService } from "@ready-for-agent/fp-service"
 import { GitHubService } from "@ready-for-agent/github-service"
 import { GitLabService } from "@ready-for-agent/gitlab-service"
 import { KeymaxxerService } from "@ready-for-agent/keymaxxer-service"
@@ -50,6 +51,7 @@ type StepServices =
   | GitLabService
   | AzureDevOpsService
   | LinearService
+  | FpService
   | SqlClient.SqlClient
 
 /**
@@ -73,6 +75,7 @@ export const LifecycleStepsLive = Layer.effect(
     const gitlab = yield* GitLabService
     const azureDevOps = yield* AzureDevOpsService
     const linear = yield* LinearService
+    const fp = yield* FpService
     const sql = yield* SqlClient.SqlClient
     // Dispatch Agent Turns by the Work Item's captured backend (ambient) so
     // concurrent dual-backend fleets never share the process-wide proxy.
@@ -137,6 +140,7 @@ export const LifecycleStepsLive = Layer.effect(
       Layer.succeed(GitLabService, gitlab),
       Layer.succeed(AzureDevOpsService, azureDevOps),
       Layer.succeed(LinearService, linear),
+      Layer.succeed(FpService, fp),
       Layer.succeed(SqlClient.SqlClient, sql),
     )
 

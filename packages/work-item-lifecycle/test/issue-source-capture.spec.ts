@@ -17,6 +17,7 @@ import {
   WorkItemLifecycleLive,
   stubActiveAgentBackendLayer,
   stubAzureDevOpsServiceLayer,
+  stubFpServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
   stubLinearServiceLayer,
@@ -95,6 +96,7 @@ const lifecycleLayer = (active: Layer.Layer<ActiveAgentBackend>) =>
     Layer.provideMerge(stubGitLabServiceLayer()),
     Layer.provideMerge(stubAzureDevOpsServiceLayer()),
     Layer.provideMerge(stubLinearServiceLayer()),
+    Layer.provideMerge(stubFpServiceLayer()),
     Layer.provideMerge(
       Layer.succeed(LifecycleSteps, LifecycleSteps.of(successfulSteps)),
     ),

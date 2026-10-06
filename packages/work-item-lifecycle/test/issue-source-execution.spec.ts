@@ -18,6 +18,7 @@ import {
   issueOperationsForge,
   stubActiveAgentBackendLayer,
   stubAzureDevOpsServiceLayer,
+  stubFpServiceLayer,
   stubGitHubServiceLayer,
   stubGitLabServiceLayer,
   stubLinearServiceLayer,
@@ -210,6 +211,7 @@ describe("Original Issue Source execution", () => {
             ),
             Layer.provideMerge(stubAzureDevOpsServiceLayer()),
             Layer.provideMerge(stubLinearServiceLayer()),
+            Layer.provideMerge(stubFpServiceLayer()),
             Layer.provideMerge(
               Layer.succeed(LifecycleSteps, LifecycleSteps.of(successfulSteps)),
             ),
