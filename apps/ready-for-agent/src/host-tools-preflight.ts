@@ -1,5 +1,12 @@
 import { isKeymaxxerAvailable } from "@ready-for-agent/keymaxxer-service"
-import { FORGES, type Forge, isForge } from "@ready-for-agent/lifecycle-model"
+import {
+  FORGES,
+  type Forge,
+  ISSUE_TRACKERS,
+  type IssueTracker,
+  isForge,
+  isIssueTracker,
+} from "@ready-for-agent/lifecycle-model"
 
 type HostTool = {
   readonly name: string
@@ -40,6 +47,36 @@ const AZURE_DEVOPS_ENV_REQUIREMENT: HostTool = {
 
 type RepositoryForge = Forge
 
+/**
+ * The harness runs the fp CLI itself, in each fp project directory, for
+ * discovery, statuses and comments; there is no fp credential to check.
+ */
+const FP_CLI_TOOL: HostTool = {
+  name: "fp",
+  installHint:
+    "Install Fiberplane's fp CLI and put it on the PATH; each fp project also needs the rfa-number fp extension: https://github.com/berenddeboer/ready-for-agent/blob/main/packages/fp-service/extension/rfa-number/README.md",
+}
+
+/** Tracker-only kinds gated by a PATH executable the harness runs. */
+const cliToolForIssueTracker = (
+  tracker: IssueTracker,
+): HostTool | undefined => {
+  switch (tracker) {
+    case "fp":
+      return FP_CLI_TOOL
+    case "linear":
+    case "github":
+    case "gitlab":
+    case "azure-devops":
+      // Linear is an API; Forge-hosted trackers are covered by the Forge.
+      return undefined
+    default: {
+      const _exhaustive: never = tracker
+      return _exhaustive
+    }
+  }
+}
+
 export type HostToolsPreflightOptions = {
   /**
    * Distinct Forges represented by persisted Repositories. `gh` is required
@@ -48,6 +85,11 @@ export type HostToolsPreflightOptions = {
    * empty list when no Repository exists.
    */
   readonly repositoryForges?: ReadonlyArray<string>
+  /**
+   * Distinct Issue Trackers of persisted Repositories. `fp` is required only
+   * when a Repository uses fp. Omitted or empty means none.
+   */
+  readonly repositoryIssueTrackers?: ReadonlyArray<string>
   /** Injectable for tests; defaults to reading `process.env`. */
   readonly hasEnvVar?: (name: string) => boolean
   /**
@@ -73,6 +115,15 @@ const resolveRepositoryForges = (
   const raw = options.repositoryForges ?? ["github"]
   const selected = new Set(raw.filter(isForge))
   return FORGES.filter((forge) => selected.has(forge))
+}
+
+const resolveRepositoryIssueTrackers = (
+  options: HostToolsPreflightOptions,
+): ReadonlyArray<IssueTracker> => {
+  const selected = new Set(
+    (options.repositoryIssueTrackers ?? []).filter(isIssueTracker),
+  )
+  return ISSUE_TRACKERS.filter((tracker) => selected.has(tracker))
 }
 
 const cliToolForForge = (forge: RepositoryForge): HostTool | undefined => {
@@ -128,6 +179,9 @@ export const checkHostTools = (
     ...alwaysRequiredTools,
     ...repositoryForges
       .map((forge) => cliToolForForge(forge))
+      .filter((tool): tool is HostTool => tool !== undefined),
+    ...resolveRepositoryIssueTrackers(options)
+      .map((tracker) => cliToolForIssueTracker(tracker))
       .filter((tool): tool is HostTool => tool !== undefined),
   ]
   const missingCliTools = requiredCliTools.filter(

@@ -1,4 +1,11 @@
-import { FORGES, type Forge, isForge } from "@ready-for-agent/lifecycle-model"
+import {
+  FORGES,
+  type Forge,
+  ISSUE_TRACKERS,
+  type IssueTracker,
+  isForge,
+  isIssueTracker,
+} from "@ready-for-agent/lifecycle-model"
 import { Database } from "bun:sqlite"
 
 const resolveFilePath = (databasePath: string): string | undefined => {
@@ -96,6 +103,41 @@ export const peekRepositoryForges = (
           (typeof count === "bigint" && count > 0n)
         return hasRows ? ["github"] : []
       }
+    } finally {
+      db.close()
+    }
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Distinct Issue Trackers of persisted Repositories, for tracker-only host
+ * tools (fp's CLI). A database without the column, or none, has none: such a
+ * database predates tracker-only kinds.
+ */
+export const peekRepositoryIssueTrackers = (
+  databasePath: string,
+): ReadonlyArray<IssueTracker> => {
+  const filePath = resolveFilePath(databasePath)
+  if (filePath === undefined) {
+    return []
+  }
+  try {
+    const db = new Database(filePath, { readonly: true, create: false })
+    try {
+      const rows = db
+        .query(
+          `SELECT DISTINCT lower(trim(issue_tracker)) AS tracker FROM repository`,
+        )
+        .values()
+      const found = new Set<IssueTracker>()
+      for (const [tracker] of rows) {
+        if (typeof tracker === "string" && isIssueTracker(tracker)) {
+          found.add(tracker)
+        }
+      }
+      return ISSUE_TRACKERS.filter((candidate) => found.has(candidate))
     } finally {
       db.close()
     }

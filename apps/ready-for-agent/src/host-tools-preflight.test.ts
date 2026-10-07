@@ -80,6 +80,47 @@ describe("host tools preflight", () => {
     expect(missing.message).not.toContain("curl")
   })
 
+  test("requires the fp CLI only when a Repository uses the fp tracker", () => {
+    const withFp = checkHostTools(
+      (command) => ["git", "gh"].includes(command),
+      {
+        repositoryForges: ["github"],
+        repositoryIssueTrackers: ["github", "fp"],
+      },
+    )
+    expect(withFp.ok).toBe(false)
+    if (withFp.ok) return
+    expect(withFp.missing.map((tool) => tool.name)).toEqual(["fp"])
+    expect(withFp.message).toContain("  - fp: Install Fiberplane's fp CLI")
+    expect(withFp.message).toContain(
+      "rfa-number fp extension: https://github.com/berenddeboer/ready-for-agent/blob/main/packages/fp-service/extension/rfa-number/README.md",
+    )
+
+    for (const repositoryIssueTrackers of [
+      undefined,
+      [],
+      ["github"],
+      ["linear"],
+      ["github", "gitlab", "azure-devops", "linear"],
+    ]) {
+      expect(
+        checkHostTools((command) => ["git", "gh"].includes(command), {
+          repositoryForges: ["github"],
+          ...(repositoryIssueTrackers === undefined
+            ? {}
+            : { repositoryIssueTrackers }),
+        }).ok,
+      ).toBe(true)
+    }
+
+    expect(
+      checkHostTools((command) => ["git", "gh", "fp"].includes(command), {
+        repositoryForges: ["github"],
+        repositoryIssueTrackers: ["fp"],
+      }).ok,
+    ).toBe(true)
+  })
+
   test("fails with install hints only for required base and Forge tools", () => {
     const result = checkHostTools(() => false)
     expect(result.ok).toBe(false)

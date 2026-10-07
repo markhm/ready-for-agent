@@ -4,6 +4,7 @@ import { join } from "node:path"
 import {
   peekForgeApiEndpoints,
   peekRepositoryForges,
+  peekRepositoryIssueTrackers,
 } from "./peek-repository-forges.ts"
 import { Database } from "bun:sqlite"
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
@@ -192,5 +193,59 @@ describe("peekForgeApiEndpoints", () => {
         path: "/_apis/connectionData",
       },
     ])
+  })
+})
+
+describe("peekRepositoryIssueTrackers", () => {
+  let roots: string[] = []
+
+  afterEach(() => {
+    for (const root of roots) {
+      rmSync(root, { recursive: true, force: true })
+    }
+    roots = []
+  })
+
+  test("returns the distinct Issue Trackers in their stable order", () => {
+    const { path, root } = createTempDb()
+    roots.push(root)
+    const db = new Database(path, { create: true })
+    try {
+      db.run(`
+        CREATE TABLE repository (
+          id TEXT PRIMARY KEY,
+          issue_tracker TEXT NOT NULL DEFAULT 'github'
+        )
+      `)
+      db.run(`INSERT INTO repository (id, issue_tracker) VALUES ('a', ' FP ')`)
+      db.run(
+        `INSERT INTO repository (id, issue_tracker) VALUES ('b', 'github')`,
+      )
+      db.run(`INSERT INTO repository (id, issue_tracker) VALUES ('d', 'bogus')`)
+    } finally {
+      db.close()
+    }
+    expect(peekRepositoryIssueTrackers(path)).toEqual(["github", "fp"])
+  })
+
+  test("a database without the column, or without the table, has none", () => {
+    expect(
+      peekRepositoryIssueTrackers("/no/such/path/ready-for-agent.db"),
+    ).toEqual([])
+    expect(peekRepositoryIssueTrackers(":memory:")).toEqual([])
+    const empty = createTempDb()
+    roots.push(empty.root)
+    new Database(empty.path, { create: true }).close()
+    expect(peekRepositoryIssueTrackers(empty.path)).toEqual([])
+    const { path, root } = createTempDb()
+    roots.push(root)
+    const db = new Database(path, { create: true })
+    try {
+      ensureRepositoryTable(db)
+      db.run(`INSERT INTO repository (id, forge) VALUES ('legacy', 'github')`)
+    } finally {
+      db.close()
+    }
+    expect(peekRepositoryIssueTrackers(path)).toEqual([])
   })
 })
