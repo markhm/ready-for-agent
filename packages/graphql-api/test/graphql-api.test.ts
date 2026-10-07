@@ -2435,6 +2435,40 @@ describe("GraphQL API", () => {
     expect(payload.errors?.[0]?.message).toContain("leaf Issues")
   })
 
+  test("does not start fp parent Implement All, under its own error code", async () => {
+    await runtime.dispose()
+    runtime = makeRuntime({
+      listRepositories: Effect.succeed([
+        makeRepositoryRecord({
+          ...repository,
+          issueTracker: "fp",
+          fpProjectDirectory: "/work/widgets",
+          fpInProgressStatus: "in-progress",
+          fpDoneStatus: "done",
+        }),
+      ]),
+    })
+    const response = await createGraphqlApi(runtime).fetch(
+      graphqlRequest({
+        query: `mutation {
+          implementAllWithAutoMerge(repositoryId: "${repository.id}", nativeId: "1") { id }
+        }`,
+      }),
+    )
+    const payload = (await response.json()) as {
+      errors?: ReadonlyArray<{
+        message?: string
+        extensions?: { code?: string }
+      }>
+    }
+    expect(payload.errors?.[0]?.extensions?.code).toBe(
+      "PARENT_IMPLEMENT_ALL_UNAVAILABLE",
+    )
+    expect(payload.errors?.[0]?.message).toBe(
+      "Implement All is not available for fp Issues in this release. Start eligible leaf Issues instead.",
+    )
+  })
+
   test("reports Linear credential independently of GitHub", async () => {
     await runtime.dispose()
     runtime = makeRuntime(

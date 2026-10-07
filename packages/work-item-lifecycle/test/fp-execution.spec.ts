@@ -442,4 +442,66 @@ describe("fp Issue execution", () => {
       result.finished.stepRuns.filter((run) => run.step === "merge_pr"),
     ).toHaveLength(1)
   })
+
+  it("recovers a close-out whose status update failed after the summary, without a second comment", async () => {
+    // Comments are kept by marker, as fp-service keeps them: a retry that
+    // posted the summary again would show as a second entry.
+    const comments: Array<{ marker: string; body: string }> = []
+    const statuses: string[] = []
+    let statusAttempts = 0
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const lifecycle = yield* WorkItemLifecycle
+        const repo = yield* seedFpRepository
+        const created = yield* lifecycle.implementNow(repo.id, FP_NATIVE_ID)
+        const afterFailure = yield* runQueuedSteps(created.id)
+        expect(afterFailure.state).toBe("close_issue")
+        expect(comments).toHaveLength(1)
+        expect(statuses).toEqual([])
+        const retried = yield* lifecycle.retry(created.id)
+        return { created, finished: yield* runQueuedSteps(retried.id) }
+      }).pipe(
+        Effect.provide(
+          fpLifecycleLayer(
+            {
+              ensureMilestoneComment: (_options, _id, marker, body) =>
+                Effect.sync(() => {
+                  const existing = comments.find(
+                    (comment) => comment.marker === marker,
+                  )
+                  if (existing === undefined) {
+                    comments.push({ marker, body })
+                  } else {
+                    existing.body = body
+                  }
+                }),
+              updateIssueStatus: (_options, _id, status) => {
+                statusAttempts += 1
+                return statusAttempts === 1
+                  ? Effect.fail(
+                      new FpRequestError({
+                        message: "fp could not update the status",
+                        kind: "unknown",
+                      }),
+                    )
+                  : Effect.sync(() => {
+                      statuses.push(status)
+                    })
+              },
+            },
+            successfulSteps,
+          ),
+        ),
+      ),
+    )
+    expect(result.finished.state).toBe("complete")
+    expect(statusAttempts).toBe(2)
+    expect(statuses).toEqual(["shipped"])
+    expect(comments).toEqual([
+      {
+        marker: fpMilestoneMarker("completion", result.created.id),
+        body: `${FP_MERGE_COMPLETION_SUMMARY}\n\n${fpMilestoneMarker("completion", result.created.id)}`,
+      },
+    ])
+  })
 })

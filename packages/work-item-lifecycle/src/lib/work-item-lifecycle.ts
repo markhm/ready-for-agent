@@ -72,7 +72,7 @@ import {
   persistedIssueIdentity,
 } from "@ready-for-agent/lifecycle-model"
 import {
-  LinearExecutionNotSupportedError,
+  type LinearExecutionNotSupportedError,
   LinearNotConfiguredError,
   LinearRequestError,
   LinearService,
@@ -114,6 +114,7 @@ import {
   NeedsHumanHandoffNotEligibleError,
   NonTransactionalQueueError,
   NotAParentIssueError,
+  type ParentImplementAllUnavailableError,
   ParentImplementWithPauseNotAllowedError,
   ParentIssueError,
   ResetCleanupError,
@@ -128,6 +129,7 @@ import {
   WorkItemNotFoundError,
   WorkItemTerminalError,
   WorkItemWaitingForBlockersError,
+  parentImplementAllRefused,
 } from "./errors.js"
 import {
   type ExplicitWorkItemExecutionProfile,
@@ -1104,6 +1106,7 @@ export type ImplementWithError =
   | ImplementAllWithAutoMergeError
   | ParentImplementWithPauseNotAllowedError
   | LinearExecutionNotSupportedError
+  | ParentImplementAllUnavailableError
 
 export type QueueError =
   | IssueNotFoundError
@@ -4575,8 +4578,8 @@ export const makeWorkItemLifecycleLive = (
 
                 if (ownedPrIssueStop?._tag === "merged") {
                   // Confirmed merge at revalidation seam: same destination as
-                  // Refresh / continueAfterHumanPrOutcome (Close Issue for
-                  // Linear, otherwise local cleanup).
+                  // Refresh / continueAfterHumanPrOutcome (Close Issue for a
+                  // tracker-only Issue Tracker, otherwise local cleanup).
                   const mergeNext = afterConfirmedMerge(toIssueSource(workItem))
                   const mergeNextState = mergeNext.kind
                   const mergeSummary =
@@ -9583,9 +9586,10 @@ export const makeWorkItemLifecycleLive = (
             const tracker = liveIssueTracker(repository)
             const implementAllRefusal =
               tracker === null ? null : parentImplementAllRefusal(tracker)
-            if (implementAllRefusal !== null) {
-              return yield* new LinearExecutionNotSupportedError({
+            if (tracker !== null && implementAllRefusal !== null) {
+              return yield* parentImplementAllRefused({
                 repositoryId,
+                issueTracker: tracker,
                 message: implementAllRefusal,
               })
             }

@@ -92,6 +92,21 @@ describe("toGraphQLError", () => {
     })
   })
 
+  test("maps ParentImplementAllUnavailableError to PARENT_IMPLEMENT_ALL_UNAVAILABLE", () => {
+    const gqlError = toGraphQLError({
+      _tag: "ParentImplementAllUnavailableError" as const,
+      repositoryId: "repo-1",
+      issueTracker: "fp",
+      message:
+        "Implement All is not available for fp Issues in this release. Start eligible leaf Issues instead.",
+    })
+    expect(gqlError.message).toContain("Implement All is not available for fp")
+    expect(gqlError.extensions).toMatchObject({
+      code: "PARENT_IMPLEMENT_ALL_UNAVAILABLE",
+      repositoryId: "repo-1",
+    })
+  })
+
   test("maps InvalidExecutionProfileError to INVALID_EXECUTION_PROFILE", () => {
     const error = {
       _tag: "InvalidExecutionProfileError" as const,

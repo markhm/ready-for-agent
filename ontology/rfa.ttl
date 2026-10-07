@@ -627,7 +627,7 @@ rfa:MergePr
   rfa:retryable true ;
   skos:prefLabel "Merge PR"@en ;
   skos:definition
-    "The Lifecycle Step that revalidates and merges an approved Work Item PR through its Forge. On Azure DevOps, a complete request that is still queued is in-flight merge work, not a Merge Revalidation Outcome or a rejected merge. After a successful merge on Azure DevOps, if the Forge Issue is still open, Merge PR completes it to that type's Completed-category state and posts the hidden-marker completion summary once; an already completed Boards item is left in state. When the Original Issue Source is Linear, a successful merge advances to Close Issue rather than local cleanup so tracker close-out can retry independently of the confirmed GitHub merge."@en .
+    "The Lifecycle Step that revalidates and merges an approved Work Item PR through its Forge. On Azure DevOps, a complete request that is still queued is in-flight merge work, not a Merge Revalidation Outcome or a rejected merge. After a successful merge on Azure DevOps, if the Forge Issue is still open, Merge PR completes it to that type's Completed-category state and posts the hidden-marker completion summary once; an already completed Boards item is left in state. When the Original Issue Source is a tracker-only Issue Tracker (Linear or fp), a successful merge advances to Close Issue rather than local cleanup so tracker close-out can retry independently of the confirmed GitHub merge."@en .
 
 rfa:CloseIssue
   a owl:Class, owl:NamedIndividual, skos:Concept,

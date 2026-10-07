@@ -1550,6 +1550,7 @@ export const DbServiceLive = Layer.effect(
                 sql,
                 {
                   repositoryId: input.repositoryId,
+                  currentFpProjectDirectory: existing.fpProjectDirectory,
                   fpProjectDirectory: nextFpProjectDirectory,
                   fpInProgressStatus: nextFpInProgressStatus,
                   fpDoneStatus: nextFpDoneStatus,

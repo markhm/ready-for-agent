@@ -2242,6 +2242,69 @@ describe("DbService", () => {
         }),
       ))
 
+    it("keeps the fp project while the Repository has unfinished fp Work Items", () =>
+      runTest(
+        Effect.gen(function* () {
+          const db = yield* DbService
+          const sql = yield* SqlClient.SqlClient
+          const repo = yield* db.addRepository(sampleInput)
+          yield* db.updateRepositorySettings(settingsInput(repo.id, fpSettings))
+          yield* insertWorkItem(sql, {
+            id: "wi-fp-unfinished",
+            repositoryId: repo.id,
+            issueNumber: 7,
+          })
+          yield* sql.unsafe(
+            `UPDATE work_item SET issue_tracker = 'fp' WHERE id = ?`,
+            ["wi-fp-unfinished"],
+          )
+          const elsewhere = {
+            ...fpSettings,
+            fpProjectDirectory: "/work/elsewhere",
+          }
+          const refusal = {
+            field: "fpProjectDirectory",
+            message:
+              "Finish or abandon this Repository's unfinished fp Work Items before mapping another fp project",
+          }
+
+          // Another project: refused. The same project: still saves.
+          expect(
+            yield* Effect.flip(
+              db.updateRepositorySettings(settingsInput(repo.id, elsewhere)),
+            ),
+          ).toMatchObject(refusal)
+          yield* db.updateRepositorySettings(settingsInput(repo.id, fpSettings))
+
+          // Leaving fp is allowed (its Work Items then skip fp), but coming
+          // back to another project by way of GitHub is refused too.
+          yield* db.updateRepositorySettings(
+            settingsInput(repo.id, { issueTracker: "github" }),
+          )
+          expect(
+            yield* Effect.flip(
+              db.updateRepositorySettings(settingsInput(repo.id, elsewhere)),
+            ),
+          ).toMatchObject(refusal)
+
+          // Once the fp Work Item is finished, any project may be mapped;
+          // an unfinished Work Item from another tracker does not block it.
+          yield* insertWorkItem(sql, {
+            id: "wi-github-unfinished",
+            repositoryId: repo.id,
+            issueNumber: 8,
+          })
+          yield* sql.unsafe(
+            `UPDATE work_item SET state = 'complete' WHERE id = ?`,
+            ["wi-fp-unfinished"],
+          )
+          const moved = yield* db.updateRepositorySettings(
+            settingsInput(repo.id, elsewhere),
+          )
+          expect(moved.fpProjectDirectory).toBe("/work/elsewhere")
+        }),
+      ))
+
     it("offers fp to GitHub-hosted Repositories only", () =>
       runTest(
         Effect.gen(function* () {

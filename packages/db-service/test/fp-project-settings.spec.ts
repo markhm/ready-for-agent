@@ -28,13 +28,22 @@ describe("fp project settings storage validation", () => {
 
   const check = (input: {
     readonly repositoryId: string
+    readonly currentFpProjectDirectory?: string | null
     readonly fpProjectDirectory: string | null
     readonly fpInProgressStatus: string | null
     readonly fpDoneStatus: string | null
   }) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient
-      return yield* checkFpProjectSettings(sql, input, (error) => error)
+      return yield* checkFpProjectSettings(
+        sql,
+        {
+          ...input,
+          currentFpProjectDirectory:
+            input.currentFpProjectDirectory ?? input.fpProjectDirectory,
+        },
+        (error) => error,
+      )
     })
 
   it("accepts a project with both statuses that no other Repository maps", () =>

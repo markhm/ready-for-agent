@@ -220,6 +220,13 @@ describe("Repository settings dialog wiring for fp", () => {
     "utf8",
   )
 
+  test("offers fp beside Linear as the Issue Tracker of a GitHub-hosted Repository", () => {
+    expect(source).toContain('<option value="linear">Linear</option>')
+    expect(source).toContain('<option value="fp">fp</option>')
+    expect(source).toContain("Linear or fp optional")
+    expect(source).toContain("fp maps one fp")
+  })
+
   test("shows the fp section only when the tracker maps an fp project", () => {
     expect(source).toContain("{usesFpProjectMapping(issueTracker) && (")
     expect(source).toContain("<RepositorySettingsFpSection")
