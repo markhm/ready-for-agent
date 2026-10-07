@@ -56,25 +56,50 @@ export const checkFpProjectSettings = <E>(
         message: "That fp project is already mapped to another Repository",
       })
     }
-    if (input.fpProjectDirectory !== input.currentFpProjectDirectory) {
-      const unfinishedFpRows = (yield* sql
-        .unsafe(
-          `SELECT id FROM work_item
-           WHERE repository_id = ?
-             AND issue_tracker = 'fp'
-             AND state NOT IN ('complete', 'failed', 'abandoned')
-           LIMIT 1`,
-          [input.repositoryId],
-        )
-        .pipe(Effect.mapError(toDatabaseError))) as readonly {
-        readonly id: string
-      }[]
-      if (unfinishedFpRows.length > 0) {
-        return yield* new InvalidRepositorySettingsError({
-          field: "fpProjectDirectory",
-          message:
-            "Finish or abandon this Repository's unfinished fp Work Items before mapping another fp project",
-        })
-      }
+    if (
+      input.fpProjectDirectory !== input.currentFpProjectDirectory &&
+      (yield* hasUnfinishedFpWorkItems(
+        sql,
+        input.repositoryId,
+        toDatabaseError,
+      ))
+    ) {
+      return yield* new InvalidRepositorySettingsError({
+        field: "fpProjectDirectory",
+        message:
+          "Finish or abandon this Repository's unfinished fp Work Items before mapping another fp project",
+      })
     }
+  })
+
+/**
+ * Whether the Repository has an fp Work Item that can still write to fp:
+ * not Complete, not Abandoned, and not Failed unless the failure is the
+ * retryable one (the ontology's Unfinished Work Item; the code matches
+ * RETRYABLE_FAILED_WORK_ITEM_CODE in work-item-lifecycle). The harness
+ * does not record a Work Item's fp project, so while one exists the
+ * Repository keeps its fp project: neither another project nor leaving fp.
+ */
+export const hasUnfinishedFpWorkItems = <E>(
+  sql: SqlClient.SqlClient,
+  repositoryId: string,
+  toDatabaseError: (error: SqlError) => E,
+) =>
+  Effect.gen(function* () {
+    const rows = (yield* sql
+      .unsafe(
+        `SELECT id FROM work_item
+         WHERE repository_id = ?
+           AND issue_tracker = 'fp'
+           AND (
+             state NOT IN ('complete', 'failed', 'abandoned')
+             OR (state = 'failed' AND failure_code = 'pr_status_checks_unresolved')
+           )
+         LIMIT 1`,
+        [repositoryId],
+      )
+      .pipe(Effect.mapError(toDatabaseError))) as readonly {
+      readonly id: string
+    }[]
+    return rows.length > 0
   })

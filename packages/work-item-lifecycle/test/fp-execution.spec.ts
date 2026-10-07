@@ -445,7 +445,8 @@ describe("fp Issue execution", () => {
 
   it("recovers a close-out whose status update failed after the summary, without a second comment", async () => {
     // Comments are kept by marker, as fp-service keeps them: a retry that
-    // posted the summary again would show as a second entry.
+    // posted the summary under a different marker would show as a second
+    // entry.
     const comments: Array<{ marker: string; body: string }> = []
     const statuses: string[] = []
     let statusAttempts = 0

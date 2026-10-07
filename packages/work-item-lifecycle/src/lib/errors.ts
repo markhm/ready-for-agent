@@ -83,10 +83,6 @@ export class ImplementAllWithAutoMergeNotEligibleError extends Schema.TaggedErro
 ) {}
 
 /**
- * Implement With cannot request an Implement Locally pause on a Parent Issue.
- * Bulk enrollment is always remote; the pause option fails closed.
- */
-/**
  * A parent Issue whose Issue Tracker does not offer Implement All (fp, by
  * the description). Linear keeps its own LinearExecutionNotSupportedError,
  * which its API clients already know.
@@ -100,6 +96,10 @@ export class ParentImplementAllUnavailableError extends Schema.TaggedErrorClass<
   },
 ) {}
 
+/**
+ * Implement With cannot request an Implement Locally pause on a Parent Issue.
+ * Bulk enrollment is always remote; the pause option fails closed.
+ */
 export class ParentImplementWithPauseNotAllowedError extends Schema.TaggedErrorClass<ParentImplementWithPauseNotAllowedError>()(
   "ParentImplementWithPauseNotAllowedError",
   {
