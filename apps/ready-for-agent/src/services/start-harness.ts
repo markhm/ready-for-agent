@@ -18,6 +18,7 @@ import {
 import {
   peekForgeApiEndpoints,
   peekRepositoryForges,
+  peekRepositoryIssueTrackers,
 } from "../peek-repository-forges.ts"
 import { bootStandaloneProduction } from "../standalone-boot.ts"
 import { ApplicationConfig } from "./application-config.ts"
@@ -100,6 +101,9 @@ export class StartHarness extends Context.Service<
           (command) => Bun.which(command) !== null,
           {
             repositoryForges,
+            repositoryIssueTrackers: peekRepositoryIssueTrackers(
+              config.databasePath,
+            ),
             keymaxxerEnabled: keymaxxerCanResolveVault(process.env),
           },
         )
