@@ -54,7 +54,7 @@ type RepositoryForge = Forge
 const FP_CLI_TOOL: HostTool = {
   name: "fp",
   installHint:
-    "Install Fiberplane's fp CLI and put it on the PATH; each fp project also needs the rfa-number fp extension (packages/fp-service/extension/rfa-number/README.md)",
+    "Install Fiberplane's fp CLI and put it on the PATH; each fp project also needs the rfa-number fp extension: https://github.com/berenddeboer/ready-for-agent/blob/main/packages/fp-service/extension/rfa-number/README.md",
 }
 
 /** Tracker-only kinds gated by a PATH executable the harness runs. */

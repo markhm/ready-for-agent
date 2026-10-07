@@ -92,7 +92,9 @@ describe("host tools preflight", () => {
     if (withFp.ok) return
     expect(withFp.missing.map((tool) => tool.name)).toEqual(["fp"])
     expect(withFp.message).toContain("  - fp: Install Fiberplane's fp CLI")
-    expect(withFp.message).toContain("rfa-number fp extension")
+    expect(withFp.message).toContain(
+      "rfa-number fp extension: https://github.com/berenddeboer/ready-for-agent/blob/main/packages/fp-service/extension/rfa-number/README.md",
+    )
 
     for (const repositoryIssueTrackers of [
       undefined,

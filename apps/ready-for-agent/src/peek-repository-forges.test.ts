@@ -233,6 +233,10 @@ describe("peekRepositoryIssueTrackers", () => {
       peekRepositoryIssueTrackers("/no/such/path/ready-for-agent.db"),
     ).toEqual([])
     expect(peekRepositoryIssueTrackers(":memory:")).toEqual([])
+    const empty = createTempDb()
+    roots.push(empty.root)
+    new Database(empty.path, { create: true }).close()
+    expect(peekRepositoryIssueTrackers(empty.path)).toEqual([])
     const { path, root } = createTempDb()
     roots.push(root)
     const db = new Database(path, { create: true })
