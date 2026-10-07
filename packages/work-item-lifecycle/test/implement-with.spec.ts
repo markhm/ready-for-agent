@@ -27,6 +27,7 @@ import {
   LifecycleSteps,
   type LifecycleStepsShape,
   AgentBackendUnavailableError as LifecycleUnavailableError,
+  ParentImplementAllUnavailableError,
   ParentImplementWithPauseNotAllowedError,
   ParentIssueError,
   STEP_RUN_REASON,
@@ -1926,6 +1927,68 @@ describe("implementWith", () => {
           )
           .pipe(Effect.flip)
         expect(error).toBeInstanceOf(LinearExecutionNotSupportedError)
+      }).pipe(Effect.provide(lifecycleLayer(catalogLayer()))),
+    )
+  })
+
+  it("rejects fp parent Implement With with the tracker-neutral refusal", async () => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const db = yield* DbService
+        const lifecycle = yield* WorkItemLifecycle
+        const repo = yield* db.addRepository({
+          forge: "github",
+          forgeHost: "github.com",
+          projectPath: "acme/widgets",
+          localPath: "/repos/acme/widgets-implement-with-fp-parent.git",
+          isBare: true,
+        })
+        yield* seedHarness(db, {
+          selectedAgentBackend: "opencode",
+          defaultModel: "settings-build",
+        })
+        yield* db.updateRepositorySettings({
+          repositoryId: repo.id,
+          paused: true,
+          defaultModel: null,
+          defaultThinkingLevel: null,
+          reviewModel: null,
+          reviewThinkingLevel: null,
+          mergePolicy: "off",
+          includeAllIssueAuthors: false,
+          waitForReadyForReviewChecks: true,
+          issueTracker: "fp",
+          fpProjectDirectory: "/work/widgets",
+          fpInProgressStatus: "in-progress",
+          fpDoneStatus: "done",
+        })
+        const nativeId = "parentaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        yield* db.storeIssue({
+          repositoryId: repo.id,
+          issueNumber: 10,
+          issueTracker: "fp",
+          nativeId,
+          displayId: "MC-parentaa",
+          title: "fp parent",
+          body: "body",
+          url: `fp://issue?id=${nativeId}`,
+          state: "OPEN",
+          githubCreatedAt: new Date(),
+          issueAuthor: null,
+          parent: null,
+          parentPosition: null,
+          hasChildren: true,
+          blockedBy: [],
+        })
+        const error = yield* lifecycle
+          .implementWith(repo.id, nativeId, explicitReviewProfile)
+          .pipe(Effect.flip)
+        expect(error).toBeInstanceOf(ParentImplementAllUnavailableError)
+        expect(error).toMatchObject({
+          issueTracker: "fp",
+          message:
+            "Implement All is not available for fp Issues in this release. Start eligible leaf Issues instead.",
+        })
       }).pipe(Effect.provide(lifecycleLayer(catalogLayer()))),
     )
   })

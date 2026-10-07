@@ -23,7 +23,10 @@ import {
   RepositoryIdentityChangeBlockedError,
   RepositoryNotFoundError,
 } from "./errors.js"
-import { checkFpProjectSettings } from "./fp-project-settings.js"
+import {
+  checkFpProjectSettings,
+  hasUnfinishedFpWorkItems,
+} from "./fp-project-settings.js"
 import {
   type AddRepositoryInput,
   type BackendModelPrefs,
@@ -1540,6 +1543,22 @@ export const DbServiceLive = Layer.effect(
               nextLinearProjectName = null
               nextLinearWorkflowStatuses = []
             }
+            if (
+              settings.kind !== "fp_project" &&
+              describeIssueTracker(existing.issueTracker).settings.kind ===
+                "fp_project" &&
+              (yield* hasUnfinishedFpWorkItems(
+                sql,
+                input.repositoryId,
+                toDatabaseError,
+              ))
+            ) {
+              return yield* new InvalidRepositorySettingsError({
+                field: "issueTracker",
+                message:
+                  "Finish or abandon this Repository's unfinished fp Work Items before switching its Issue Tracker away from fp",
+              })
+            }
             if (settings.kind !== "fp_project") {
               nextFpProjectDirectory = null
               nextFpInProgressStatus = null
@@ -1550,6 +1569,7 @@ export const DbServiceLive = Layer.effect(
                 sql,
                 {
                   repositoryId: input.repositoryId,
+                  currentFpProjectDirectory: existing.fpProjectDirectory,
                   fpProjectDirectory: nextFpProjectDirectory,
                   fpInProgressStatus: nextFpInProgressStatus,
                   fpDoneStatus: nextFpDoneStatus,

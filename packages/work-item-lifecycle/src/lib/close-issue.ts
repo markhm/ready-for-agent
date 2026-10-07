@@ -57,7 +57,8 @@ const rejectIfOpenAndIneligible = (
  * with no blockers; already-closed Issues are accepted), then idempotently
  * publishes the summary and closes the Issue via the Work Item's Original
  * Issue Source rather than the Repository's current Issue Tracker. Linear
- * sources complete with the configured Done status and do not create a PR.
+ * and fp sources complete with the configured Done status and do not create
+ * a PR.
  */
 export const closeIssue = (context: LifecycleStepContext) =>
   Effect.gen(function* () {

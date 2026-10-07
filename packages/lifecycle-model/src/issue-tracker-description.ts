@@ -110,8 +110,6 @@ export type IssueTrackerDescription = { readonly displayName: string } & (
   | ({ readonly availability: NotSelectable } & Behaviours<NotImplemented>)
 )
 
-const NOT_IMPLEMENTED: NotImplemented = { kind: "not_implemented" }
-
 const forgeHostedDescription = (
   forge: Forge,
   displayName: string,
@@ -178,8 +176,9 @@ export const ISSUE_TRACKER_DESCRIPTIONS = {
   fp: {
     displayName: "fp",
     availability: {
-      kind: "not_selectable",
-      message: "fp is not yet available as an Issue Tracker",
+      kind: "forges",
+      forges: ["github"],
+      unavailableMessage: "fp is available only for GitHub-hosted Repositories",
     },
     settings: { kind: "fp_project" },
     credential: { kind: "none" },
@@ -187,8 +186,16 @@ export const ISSUE_TRACKER_DESCRIPTIONS = {
     // The agent works from the stored Issue text; it never reads fp.
     presentation: { kind: "tracker_issue" },
     pullRequestReference: { kind: "tracker_identity" },
-    afterConfirmedMerge: NOT_IMPLEMENTED,
-    parentImplementAll: NOT_IMPLEMENTED,
+    afterConfirmedMerge: {
+      kind: "close_issue",
+      completionSummary:
+        "Ready for Agent completed this Issue after the GitHub pull request merged.",
+    },
+    parentImplementAll: {
+      kind: "unavailable",
+      message:
+        "Implement All is not available for fp Issues in this release. Start eligible leaf Issues instead.",
+    },
     relevancePolicy: trackerOnlyRelevancePolicy,
   },
 } as const satisfies Record<IssueTracker, IssueTrackerDescription>

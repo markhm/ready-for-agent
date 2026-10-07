@@ -1,4 +1,6 @@
 import { Schema } from "effect"
+import type { IssueTracker } from "@ready-for-agent/lifecycle-model"
+import { LinearExecutionNotSupportedError } from "@ready-for-agent/linear-service"
 
 export * from "./create-worktree-errors.js"
 export * from "./install-dependencies-errors.js"
@@ -77,6 +79,20 @@ export class ImplementAllWithAutoMergeNotEligibleError extends Schema.TaggedErro
     repositoryId: Schema.String,
     issueNumber: Schema.Finite,
     reason: Schema.String,
+  },
+) {}
+
+/**
+ * A parent Issue whose Issue Tracker does not offer Implement All (fp, by
+ * the description). Linear keeps its own LinearExecutionNotSupportedError,
+ * which its API clients already know.
+ */
+export class ParentImplementAllUnavailableError extends Schema.TaggedErrorClass<ParentImplementAllUnavailableError>()(
+  "ParentImplementAllUnavailableError",
+  {
+    repositoryId: Schema.String,
+    issueTracker: Schema.String,
+    message: Schema.String,
   },
 ) {}
 
@@ -309,3 +325,36 @@ export class LifecycleStepFailedError extends Schema.TaggedErrorClass<LifecycleS
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
+
+/**
+ * The error that refuses parent Implement All for this Issue Tracker kind:
+ * Linear's existing one for Linear, a tracker-neutral one for any other.
+ * Exhaustive, so a new kind decides here.
+ */
+export const parentImplementAllRefused = (input: {
+  readonly repositoryId: string
+  readonly issueTracker: IssueTracker
+  readonly message: string
+}): LinearExecutionNotSupportedError | ParentImplementAllUnavailableError => {
+  const tracker = input.issueTracker
+  switch (tracker) {
+    case "linear":
+      return new LinearExecutionNotSupportedError({
+        repositoryId: input.repositoryId,
+        message: input.message,
+      })
+    case "fp":
+    case "github":
+    case "gitlab":
+    case "azure-devops":
+      return new ParentImplementAllUnavailableError({
+        repositoryId: input.repositoryId,
+        issueTracker: tracker,
+        message: input.message,
+      })
+    default: {
+      const _exhaustive: never = tracker
+      return _exhaustive
+    }
+  }
+}

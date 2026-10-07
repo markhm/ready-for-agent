@@ -317,6 +317,13 @@ export const toGraphQLError = (error: unknown): GraphQLError => {
         "LINEAR_NOT_CONFIGURED",
         { repositoryId: error.repositoryId },
       )
+    case "ParentImplementAllUnavailableError":
+      return gql(
+        error.message ??
+          "Implement All is not available for this Issue Tracker",
+        "PARENT_IMPLEMENT_ALL_UNAVAILABLE",
+        { repositoryId: error.repositoryId },
+      )
     case "LinearExecutionNotSupportedError":
       return gql(
         error.message ?? "Linear Issue execution is not available yet",

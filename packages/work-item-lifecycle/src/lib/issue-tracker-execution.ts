@@ -5,10 +5,9 @@ import type {
   FpRequestError,
   FpService,
 } from "@ready-for-agent/fp-service"
-import {
-  type IssueSource,
-  type IssueTracker,
-  behaviourNotImplemented,
+import type {
+  IssueSource,
+  IssueTracker,
 } from "@ready-for-agent/lifecycle-model"
 import type {
   LinearNotConfiguredError,
@@ -16,6 +15,7 @@ import type {
   LinearService,
 } from "@ready-for-agent/linear-service"
 import {
+  completeFpIssue,
   notifyFpHumanAttention,
   notifyFpPullRequest,
   notifyFpWorkStarted,
@@ -119,11 +119,7 @@ export const completeTrackerIssue = (input: {
   readonly issueSource: IssueSource | undefined
   readonly workItemId: string
   readonly summary: string
-}): Effect.Effect<
-  boolean,
-  LinearRequestError | LinearNotConfiguredError,
-  LinearService
-> => {
+}): Effect.Effect<boolean, TrackerError, LinearService | FpService> => {
   if (input.issueSource === undefined) {
     return Effect.succeed(false)
   }
@@ -139,7 +135,10 @@ export const completeTrackerIssue = (input: {
         issueSource: { ...input.issueSource, tracker },
       }).pipe(Effect.as(true))
     case "fp":
-      return Effect.sync(() => behaviourNotImplemented(tracker, "Close Issue"))
+      return completeFpIssue({
+        ...input,
+        issueSource: { ...input.issueSource, tracker },
+      }).pipe(Effect.as(true))
     default: {
       const _exhaustive: never = tracker
       return _exhaustive

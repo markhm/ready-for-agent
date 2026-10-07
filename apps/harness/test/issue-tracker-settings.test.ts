@@ -30,11 +30,19 @@ describe("Repository settings Issue Tracker facts", () => {
     }
   })
 
-  test("keeps only Linear when a Repository moves back to GitHub hosting", () => {
+  test("keeps Linear or fp when a Repository moves back to GitHub hosting", () => {
     for (const value of values) {
       expect(isTrackerOnlyKindSelectableFor("github", value)).toBe(
-        value === "linear",
+        value === "linear" || value === "fp",
       )
+    }
+  })
+
+  test("offers no tracker-only kind to a Repository on another Forge", () => {
+    for (const forge of ["gitlab", "azure-devops"] as const) {
+      for (const value of values) {
+        expect(isTrackerOnlyKindSelectableFor(forge, value)).toBe(false)
+      }
     }
   })
 })

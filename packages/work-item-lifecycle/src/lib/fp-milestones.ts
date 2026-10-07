@@ -9,14 +9,19 @@ import {
   fpProjectOptionsFromSettings,
 } from "@ready-for-agent/fp-service"
 import {
+  ISSUE_TRACKER_DESCRIPTIONS,
   type IssueSource,
   describeIssueTracker,
 } from "@ready-for-agent/lifecycle-model"
 import {
+  completionComment,
   humanAttentionComment,
   pullRequestComment,
   workStartedComment,
 } from "./milestone-copy.js"
+
+export const FP_MERGE_COMPLETION_SUMMARY =
+  ISSUE_TRACKER_DESCRIPTIONS.fp.afterConfirmedMerge.completionSummary
 
 /** An Original Issue Source already dispatched to fp. */
 export type FpIssueSource = IssueSource & { readonly tracker: "fp" }
@@ -142,5 +147,45 @@ export const notifyFpHumanAttention = (input: {
       input.issueSource.nativeId,
       marker,
       humanAttentionComment(input.reason, marker),
+    )
+  })
+
+/**
+ * Close Issue for an fp Original Issue Source: publish the completion
+ * summary once, then move the Issue to the Repository's Done status. An
+ * Issue already finished is accepted without a second transition; the
+ * summary comment is updated in place on a retry.
+ */
+export const completeFpIssue = (input: {
+  readonly repository: RepositoryRecord
+  readonly issueSource: FpIssueSource
+  readonly workItemId: string
+  readonly summary: string
+}): Effect.Effect<void, FpRequestError | FpNotConfiguredError, FpService> =>
+  Effect.gen(function* () {
+    const project = yield* fpProjectFor(input.repository)
+    if (project._tag === "left") {
+      return yield* skipped("completion", project, input)
+    }
+    const done = input.repository.fpDoneStatus?.trim() ?? ""
+    if (done === "") {
+      return yield* new FpNotConfiguredError({
+        repositoryId: input.repository.id,
+        message:
+          "No Done status is configured for the fp project. Choose Done in Repository settings, then Retry.",
+      })
+    }
+    const fp = yield* FpService
+    const marker = fpMilestoneMarker("completion", input.workItemId)
+    yield* fp.ensureMilestoneComment(
+      project.options,
+      input.issueSource.nativeId,
+      marker,
+      completionComment(input.summary, marker),
+    )
+    yield* fp.updateIssueStatus(
+      project.options,
+      input.issueSource.nativeId,
+      done,
     )
   })

@@ -54,7 +54,6 @@ import {
   LINEAR_API_KEY_SECRET_NAME,
   LINEAR_VAULT_ACCOUNT,
   LINEAR_VAULT_PROVIDER,
-  LinearExecutionNotSupportedError,
   LinearService,
 } from "@ready-for-agent/linear-service"
 import { DirectoryPicker, LocalGit } from "@ready-for-agent/local-git"
@@ -71,6 +70,7 @@ import {
   isJobsCompletedWorkItemState,
   isJobsWorkingWorkItem,
   isRetryableFailedWorkItem,
+  parentImplementAllRefused,
   resolveExecutionProfileSelection,
 } from "@ready-for-agent/work-item-lifecycle"
 import {
@@ -650,8 +650,9 @@ export const createGraphqlApi = <R>(
       }
       const refusal = parentImplementAllRefusal(repository.issueTracker)
       if (refusal !== null) {
-        return yield* new LinearExecutionNotSupportedError({
+        return yield* parentImplementAllRefused({
           repositoryId: repository.id,
+          issueTracker: repository.issueTracker,
           message: refusal,
         })
       }
