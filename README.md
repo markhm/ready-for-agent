@@ -1,8 +1,8 @@
 # Ready for Agent: Clanker Harness for 150+ PRs a week
 
-Ready for Agent turns GitHub, GitLab, Azure DevOps, or Linear issues into
-merged pull requests. You mark them `ready-for-agent` (a label on
-GitHub, GitLab, and Linear, a Boards tag on Azure DevOps). The harness hands
+Ready for Agent turns GitHub, GitLab, Azure DevOps, Linear, or fp issues
+into merged pull requests. You mark them `ready-for-agent` (a label on
+GitHub, GitLab, Linear, and fp, a Boards tag on Azure DevOps). The harness hands
 each one to your preferred coding agent, which implements it, reviews
 the code, opens a PR, and merges when allowed. You design, you
 architect, you verify where needed — the harness removes the
@@ -26,6 +26,7 @@ action.
     - [GitLab](#gitlab)
     - [Azure DevOps](#azure-devops)
     - [Linear](#linear)
+    - [fp](#fp)
   - [Supported forges](#supported-forges)
 - [Command reference](#command-reference)
 - [Troubleshooting](#troubleshooting)
@@ -78,9 +79,10 @@ action.
 
    To use Linear with a GitHub repository, change **Issue Tracker** to
    **Linear** in the repository settings after adding it. Setup prompts
-   you for a separate Linear API key — see [Linear](#linear).
+   you for a separate Linear API key — see [Linear](#linear). To use fp,
+   change it to **fp** instead — see [fp](#fp).
 
-4. Mark a Ready Issue: label a GitHub, GitLab, or Linear issue
+4. Mark a Ready Issue: label a GitHub, GitLab, Linear, or fp issue
    `ready-for-agent`, or tag an Azure Boards work item
    `ready-for-agent`. It shows up in the UI shortly. By default only
    issues you authored are listed — see
@@ -184,15 +186,15 @@ issues that come with running compute in the cloud.
   spend, no environment drift.
 - Works with your existing Claude (or other) subscription rather than
   metered API billing.
-- GitHub, GitLab, and Azure DevOps support, plus Linear issues paired
-  with GitHub repositories.
+- GitHub, GitLab, and Azure DevOps support, plus Linear and fp issues
+  paired with GitHub repositories.
 - Human in the loop where you want it: you design, you architect, you
   verify.
 
 ## How it works
 
 The harness is a loop around issues marked `ready-for-agent` (a GitHub,
-GitLab, or Linear label, or an Azure Boards tag): it only shows those, you
+GitLab, Linear, or fp label, or an Azure Boards tag): it only shows those, you
 pick the ones to work on, and it autonomously completes them using
 your selected coding agent. For each issue it creates a fresh
 worktree, installs packages, and asks the headless agent to implement
@@ -310,9 +312,9 @@ KEYMAXXER_ENABLED=false npx ready-for-agent@latest
 ### Supported ticket systems
 
 Ready for Agent supports GitHub Issues, GitLab Issues, Azure Boards,
-and Linear. Adding a repository automatically selects its code host's
-issue tracker. To use Linear, add a GitHub repository first, then
-change its issue tracker in the repository settings.
+Linear, and fp. Adding a repository automatically selects its code
+host's issue tracker. To use Linear or fp, add a GitHub repository
+first, then change its issue tracker in the repository settings.
 
 #### GitHub
 
@@ -363,6 +365,46 @@ settings to include other authors. The harness moves issues to
 In Progress when work starts and Done after a confirmed merge or a
 successful outcome requiring no code changes.
 
+#### fp
+
+fp is Fiberplane's local-first issue tracker. It is
+supported as an issue tracker for GitHub repositories: issues live in
+an fp project on the machine that runs the harness, while code, pull
+requests, reviews, and CI remain on GitHub. The harness talks to fp
+through the `fp` CLI; there is no API key.
+
+On the machine that runs the harness:
+
+- Install the `fp` CLI and log in. By default only issues you authored
+  are included, and "you" is the email of the logged-in fp account.
+- Register the fp project there (`fp project list` shows it). Its
+  folder does not have to be the repository's clone.
+- Install the `rfa-number` fp extension; see
+  [its README](packages/fp-service/extension/rfa-number/README.md).
+  The harness keeps each issue's number in fp, in an issue property
+  this extension registers.
+
+After initial repository setup:
+
+1. Open the repository settings and change **Issue Tracker** from
+   **GitHub** to **fp**.
+2. Select the **fp project** from the projects registered on the
+   machine; the settings show its folder and whether it is ready.
+3. Choose its **In Progress** and **Done** statuses, and save.
+
+Only open issues in the project with the `ready-for-agent` label are
+candidates; enable **Include all Issue Authors** to include other
+authors. The first time the harness sees a Ready issue, it gives it the
+next number, stored in fp as the `rfa-number` property. The harness
+moves issues to In Progress when work starts, comments when work starts,
+when the pull request opens, and when it needs a person, and moves them
+to Done with a summary after a confirmed merge or a successful outcome
+requiring no code changes. The pull request refers to the fp issue
+instead of closing a GitHub issue. Implement All is not available for
+fp parent issues; start the leaf issues instead. While a repository
+has unfinished fp work items, its fp project and its issue tracker
+cannot be changed.
+
 ### Supported forges
 
 A forge hosts your Git repository, pull requests, code reviews, and CI.
@@ -373,8 +415,8 @@ Ready for Agent supports:
 - **Azure DevOps** — authenticate with a personal access token via
   `AZURE_DEVOPS_EXT_PAT`.
 
-The issue tracker can be separate from the forge: Linear issues are
-currently supported with GitHub repositories.
+The issue tracker can be separate from the forge: Linear and fp issues
+are currently supported with GitHub repositories.
 
 ## Command reference
 
@@ -417,11 +459,15 @@ unaffected (`bun run ready-for-agent`).
 
 ### A labelled issue does not show up
 
-- GitHub, GitLab, and Linear: the issue must carry the `ready-for-agent` label.
+- GitHub, GitLab, Linear, and fp: the issue must carry the `ready-for-agent` label.
   Azure DevOps: the Boards work item must carry the `ready-for-agent`
   tag — not a GitHub-style label. The harness only shows those.
 - Linear issues must also belong to the project mapped in the
   repository settings — see [Linear](#linear).
+- fp issues must be open in the fp project mapped in the repository
+  settings, and that project must show as ready there; the settings
+  say what is missing, such as the `fp` CLI or the `rfa-number`
+  extension — see [fp](#fp).
 - By default only issues **you** authored are listed. If someone else's
   `ready-for-agent` issue is missing, enable **Include all Issue Authors**
   in the repo settings to include issues created by any author.
@@ -499,8 +545,8 @@ is `AZURE_DEVOPS_EXT_PAT`, and Merge Policy Always is the unattended
 setting when the Azure repo has no CI. See
 [Azure DevOps](#azure-devops).
 
-You can also use [Linear](#linear) for issue tracking with a GitHub
-repository; GitHub still hosts the code and pull requests.
+You can also use [Linear](#linear) or [fp](#fp) for issue tracking with
+a GitHub repository; GitHub still hosts the code and pull requests.
 
 3. Can I use my Claude subscription?
 
