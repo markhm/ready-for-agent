@@ -67,7 +67,13 @@ describe("Issue Tracker descriptions", () => {
     // Implement and the pull request present fp as Linear's are presented.
     expect(fp.presentation).toEqual({ kind: "tracker_issue" })
     expect(fp.pullRequestReference).toEqual({ kind: "tracker_identity" })
-    for (const behaviour of [fp.afterConfirmedMerge, fp.parentImplementAll]) {
+    // A confirmed merge closes the fp Issue, as it closes a Linear one.
+    expect(fp.afterConfirmedMerge).toEqual({
+      kind: "close_issue",
+      completionSummary:
+        "Ready for Agent completed this Issue after the GitHub pull request merged.",
+    })
+    for (const behaviour of [fp.parentImplementAll]) {
       expect(behaviour).toEqual({ kind: "not_implemented" })
     }
   })
@@ -89,8 +95,8 @@ describe("Issue Tracker descriptions", () => {
   })
 
   it("treats reaching a missing behaviour as a defect", () => {
-    expect(() => behaviourNotImplemented("fp", "afterConfirmedMerge")).toThrow(
-      "Issue Tracker fp has no afterConfirmedMerge yet and is not selectable",
+    expect(() => behaviourNotImplemented("fp", "parentImplementAll")).toThrow(
+      "Issue Tracker fp has no parentImplementAll yet and is not selectable",
     )
   })
 })

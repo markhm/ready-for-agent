@@ -10,6 +10,10 @@ import {
 } from "@ready-for-agent/db-service/test"
 import { formatUserFacingError } from "@ready-for-agent/forge-contract"
 import {
+  FpNotConfiguredError,
+  FpRequestError,
+} from "@ready-for-agent/fp-service"
+import {
   GitHubService,
   type GitHubServiceShape,
 } from "@ready-for-agent/github-service"
@@ -32,6 +36,7 @@ import {
   linearCompletionComment,
   makeWorkItemId,
   stubAzureDevOpsServiceLayer,
+  stubFpServiceLayer,
   stubGitLabServiceLayer,
   stubLinearServiceLayer,
 } from "../src/index.js"
@@ -113,6 +118,31 @@ const linearLeaf = {
   blockedBy: [] as const,
 }
 
+const fpNativeId = "miygcidmabcdefghijklmnopqrstuvwx"
+const fpRepository = makeRepositoryRecord({
+  localPath: "/repos/widgets",
+  issueTracker: "fp",
+  fpProjectDirectory: "/work/mc-platform",
+  fpInProgressStatus: "in-progress",
+  fpDoneStatus: "shipped",
+})
+const fpIssueSource = {
+  tracker: "fp" as const,
+  nativeId: fpNativeId,
+  displayId: "MC-miygcidm",
+  url: `fp://issue?workspace=mhm&project=proj&id=${fpNativeId}`,
+}
+const fpLeaf = {
+  ...linearLeaf,
+  repositoryId: fpRepository.id,
+  issueNumber: 7,
+  issueTracker: "fp" as const,
+  nativeId: fpNativeId,
+  displayId: "MC-miygcidm",
+  title: "fp leaf",
+  url: fpIssueSource.url,
+}
+
 const unusedGithub = {
   getAuthenticatedUserLogin: () => Effect.succeed("test-operator"),
   listReadyIssues: () => Effect.succeed([]),
@@ -168,7 +198,14 @@ describe("closeIssue", () => {
     const github = Layer.succeed(GitHubService, unusedGithub)
     const error = await Effect.runPromise(
       closeIssue(context).pipe(
-        Effect.provide(Layer.mergeAll(db, github, stubLinearServiceLayer())),
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            stubLinearServiceLayer(),
+            stubFpServiceLayer(),
+          ),
+        ),
         Effect.flip,
       ),
     )
@@ -267,6 +304,7 @@ describe("closeIssue", () => {
             gitlab,
             stubAzureDevOpsServiceLayer(),
             stubLinearServiceLayer(),
+            stubFpServiceLayer(),
           ),
         ),
       ),
@@ -344,6 +382,7 @@ describe("closeIssue", () => {
             stubGitLabServiceLayer(),
             azureDevOps,
             stubLinearServiceLayer(),
+            stubFpServiceLayer(),
           ),
         ),
       ),
@@ -408,6 +447,7 @@ describe("closeIssue", () => {
             stubGitLabServiceLayer(),
             azureDevOps,
             stubLinearServiceLayer(),
+            stubFpServiceLayer(),
           ),
         ),
         Effect.flip,
@@ -435,7 +475,14 @@ describe("closeIssue", () => {
     } satisfies GitHubServiceShape)
     const error = await Effect.runPromise(
       closeIssue(context).pipe(
-        Effect.provide(Layer.mergeAll(db, github, stubLinearServiceLayer())),
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            stubLinearServiceLayer(),
+            stubFpServiceLayer(),
+          ),
+        ),
         Effect.flip,
       ),
     )
@@ -469,7 +516,14 @@ describe("closeIssue", () => {
     } satisfies GitHubServiceShape)
     const error = await Effect.runPromise(
       closeIssue(context).pipe(
-        Effect.provide(Layer.mergeAll(db, github, stubLinearServiceLayer())),
+        Effect.provide(
+          Layer.mergeAll(
+            db,
+            github,
+            stubLinearServiceLayer(),
+            stubFpServiceLayer(),
+          ),
+        ),
         Effect.flip,
       ),
     )
@@ -513,6 +567,7 @@ describe("closeIssue", () => {
             stubGitLabServiceLayer(),
             stubAzureDevOpsServiceLayer(),
             stubLinearServiceLayer(),
+            stubFpServiceLayer(),
           ),
         ),
       ),
@@ -553,6 +608,7 @@ describe("closeIssue", () => {
             stubGitLabServiceLayer(),
             stubAzureDevOpsServiceLayer(),
             stubLinearServiceLayer(),
+            stubFpServiceLayer(),
           ),
         ),
       ),
@@ -601,6 +657,7 @@ describe("closeIssue", () => {
             gitlab,
             stubAzureDevOpsServiceLayer(),
             stubLinearServiceLayer(),
+            stubFpServiceLayer(),
           ),
         ),
       ),
@@ -653,6 +710,7 @@ describe("closeIssue", () => {
             gitlab,
             stubAzureDevOpsServiceLayer(),
             stubLinearServiceLayer(),
+            stubFpServiceLayer(),
           ),
         ),
       ),
@@ -712,6 +770,7 @@ describe("closeIssue", () => {
                   comments.push({ nativeId, marker, body })
                 }),
             }),
+            stubFpServiceLayer(),
           ),
         ),
       ),
@@ -776,6 +835,7 @@ describe("closeIssue", () => {
                   comments.push({ marker, body })
                 }),
             }),
+            stubFpServiceLayer(),
           ),
         ),
       ),
@@ -852,6 +912,7 @@ describe("closeIssue", () => {
                   comments.push(marker)
                 }),
             }),
+            stubFpServiceLayer(),
           ),
         ),
       ),
@@ -911,6 +972,7 @@ describe("closeIssue", () => {
                   states.push(stateId)
                 }),
             }),
+            stubFpServiceLayer(),
           ),
         ),
       ),
@@ -950,6 +1012,7 @@ describe("closeIssue", () => {
                   commented = true
                 }),
             }),
+            stubFpServiceLayer(),
           ),
         ),
         Effect.flip,
@@ -1006,6 +1069,7 @@ describe("closeIssue", () => {
                   comments.push(marker)
                 }),
             }),
+            stubFpServiceLayer(),
           ),
         ),
         Effect.flip,
@@ -1016,6 +1080,148 @@ describe("closeIssue", () => {
     expect(comments).toEqual([
       linearMilestoneMarker("completion", context.workItemId),
     ])
+  })
+
+  const fpCloseLayers = (
+    repository: typeof fpRepository,
+    fp: Parameters<typeof stubFpServiceLayer>[0],
+    onGithub: () => void,
+  ) =>
+    Layer.mergeAll(
+      stubDbServiceLayer({
+        listRepositories: Effect.succeed([repository]),
+        listIssues: () =>
+          Effect.succeed([{ ...fpLeaf, repositoryId: repository.id }]),
+      }),
+      Layer.succeed(GitHubService, {
+        ...unusedGithub,
+        ensureIssueCompletedWithSummary: () => Effect.sync(onGithub),
+      } satisfies GitHubServiceShape),
+      stubGitLabServiceLayer(),
+      stubAzureDevOpsServiceLayer(),
+      stubLinearServiceLayer(),
+      stubFpServiceLayer(fp),
+    )
+
+  it("completes an fp Issue: the summary first, then the Repository's Done status", async () => {
+    const writes: string[] = []
+    let githubCalls = 0
+    await Effect.runPromise(
+      closeIssue({ ...context, issueSource: fpIssueSource }).pipe(
+        Effect.provide(
+          fpCloseLayers(
+            fpRepository,
+            {
+              ensureMilestoneComment: (options, id, marker, body) =>
+                Effect.sync(() => {
+                  writes.push(
+                    `comment ${options.projectDirectory} ${id} ${marker} ${JSON.stringify(body)}`,
+                  )
+                }),
+              updateIssueStatus: (options, id, status) =>
+                Effect.sync(() => {
+                  writes.push(
+                    `status ${options.projectDirectory} ${id} ${status} closed=${options.closedStatuses?.join(",")}`,
+                  )
+                }),
+            },
+            () => {
+              githubCalls += 1
+            },
+          ),
+        ),
+      ),
+    )
+    const marker = `ready-for-agent:completion:${context.workItemId}`
+    expect(writes).toEqual([
+      `comment /work/mc-platform ${fpNativeId} ${marker} ${JSON.stringify(`Findings complete.\n\n${marker}`)}`,
+      `status /work/mc-platform ${fpNativeId} shipped closed=done,rejected,shipped`,
+    ])
+    expect(githubCalls).toBe(0)
+  })
+
+  it("fails fp close-out as an fp error when Done is not configured, before writing anything", async () => {
+    const markers: string[] = []
+    const error = await Effect.runPromise(
+      closeIssue({ ...context, issueSource: fpIssueSource }).pipe(
+        Effect.provide(
+          fpCloseLayers(
+            { ...fpRepository, fpDoneStatus: null },
+            {
+              ensureMilestoneComment: (_options, _id, marker) =>
+                Effect.sync(() => {
+                  markers.push(marker)
+                }),
+            },
+            () => {},
+          ),
+        ),
+        Effect.flip,
+      ),
+    )
+    expect(error).toBeInstanceOf(FpNotConfiguredError)
+    expect(error).toMatchObject({
+      message: expect.stringContaining("No Done status"),
+    })
+    expect(markers).toEqual([])
+  })
+
+  it("completes an fp Original Issue Source after the Repository leaves fp without touching fp or GitHub", async () => {
+    const writes: string[] = []
+    let githubCalls = 0
+    await Effect.runPromise(
+      closeIssue({ ...context, issueSource: fpIssueSource }).pipe(
+        Effect.provide(
+          fpCloseLayers(
+            {
+              ...fpRepository,
+              issueTracker: "github",
+              fpProjectDirectory: null,
+              fpInProgressStatus: null,
+              fpDoneStatus: null,
+            },
+            {
+              ensureMilestoneComment: () =>
+                Effect.sync(() => writes.push("comment")),
+              updateIssueStatus: () => Effect.sync(() => writes.push("status")),
+            },
+            () => {
+              githubCalls += 1
+            },
+          ),
+        ),
+      ),
+    )
+    expect(writes).toEqual([])
+    expect(githubCalls).toBe(0)
+  })
+
+  it("surfaces an fp request failure without calling GitHub", async () => {
+    let githubCalls = 0
+    const error = await Effect.runPromise(
+      closeIssue({ ...context, issueSource: fpIssueSource }).pipe(
+        Effect.provide(
+          fpCloseLayers(
+            fpRepository,
+            {
+              ensureMilestoneComment: () =>
+                Effect.fail(
+                  new FpRequestError({
+                    message: "fp could not add the comment",
+                    kind: "unknown",
+                  }),
+                ),
+            },
+            () => {
+              githubCalls += 1
+            },
+          ),
+        ),
+        Effect.flip,
+      ),
+    )
+    expect(error).toBeInstanceOf(FpRequestError)
+    expect(githubCalls).toBe(0)
   })
 
   it("surfaces a Linear request failure without calling GitHub", async () => {
@@ -1051,6 +1257,7 @@ describe("closeIssue", () => {
                   }),
                 ),
             }),
+            stubFpServiceLayer(),
           ),
         ),
         Effect.flip,

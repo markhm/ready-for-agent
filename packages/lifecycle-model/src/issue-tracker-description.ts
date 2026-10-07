@@ -187,7 +187,11 @@ export const ISSUE_TRACKER_DESCRIPTIONS = {
     // The agent works from the stored Issue text; it never reads fp.
     presentation: { kind: "tracker_issue" },
     pullRequestReference: { kind: "tracker_identity" },
-    afterConfirmedMerge: NOT_IMPLEMENTED,
+    afterConfirmedMerge: {
+      kind: "close_issue",
+      completionSummary:
+        "Ready for Agent completed this Issue after the GitHub pull request merged.",
+    },
     parentImplementAll: NOT_IMPLEMENTED,
     relevancePolicy: trackerOnlyRelevancePolicy,
   },
