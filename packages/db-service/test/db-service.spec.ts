@@ -2152,27 +2152,112 @@ describe("DbService", () => {
         }),
       ))
 
-    it("rejects fp until its adapter exists, leaving the Repository unchanged", () =>
+    const fpSettings = {
+      issueTracker: "fp" as const,
+      fpProjectDirectory: " /work/widgets ",
+      fpInProgressStatus: "in-progress",
+      fpDoneStatus: "done",
+    }
+
+    it("selects fp for a GitHub-hosted Repository and reads its project back", () =>
       runTest(
         Effect.gen(function* () {
           const db = yield* DbService
           const repo = yield* db.addRepository(sampleInput)
 
-          const error = yield* Effect.flip(
-            db.updateRepositorySettings(
-              settingsInput(repo.id, { issueTracker: "fp" }),
-            ),
+          const saved = yield* db.updateRepositorySettings(
+            settingsInput(repo.id, fpSettings),
           )
+          expect(saved.issueTracker).toBe("fp")
+          expect(saved.fpProjectDirectory).toBe("/work/widgets")
+          expect(saved.fpInProgressStatus).toBe("in-progress")
+          expect(saved.fpDoneStatus).toBe("done")
 
-          expect(error).toBeInstanceOf(InvalidRepositorySettingsError)
-          expect(error).toMatchObject({
-            field: "issueTracker",
-            message: "fp is not yet available as an Issue Tracker",
-          })
+          // And back: GitHub again, with the fp settings cleared.
+          const back = yield* db.updateRepositorySettings(
+            settingsInput(repo.id, { issueTracker: "github" }),
+          )
+          expect(back.issueTracker).toBe("github")
+          expect(back.fpProjectDirectory).toBeNull()
+        }),
+      ))
+
+    it("refuses fp without a project or without both statuses, leaving the Repository unchanged", () =>
+      runTest(
+        Effect.gen(function* () {
+          const db = yield* DbService
+          const repo = yield* db.addRepository(sampleInput)
+          const refusals = [
+            {
+              extra: { ...fpSettings, fpProjectDirectory: "  " },
+              field: "fpProjectDirectory",
+              message: "Select the fp project mapped to this Repository",
+            },
+            {
+              extra: { ...fpSettings, fpDoneStatus: null },
+              field: "fpWorkflowStatuses",
+              message:
+                "Choose In Progress and Done statuses for the fp project",
+            },
+          ]
+          for (const refusal of refusals) {
+            const error = yield* Effect.flip(
+              db.updateRepositorySettings(
+                settingsInput(repo.id, refusal.extra),
+              ),
+            )
+            expect(error).toBeInstanceOf(InvalidRepositorySettingsError)
+            expect(error).toMatchObject({
+              field: refusal.field,
+              message: refusal.message,
+            })
+          }
           const unchanged = (yield* db.listRepositories).find(
             (r) => r.id === repo.id,
           )
           expect(unchanged?.issueTracker).toBe("github")
+        }),
+      ))
+
+    it("refuses an fp project another Repository already maps", () =>
+      runTest(
+        Effect.gen(function* () {
+          const db = yield* DbService
+          const first = yield* db.addRepository(sampleInput)
+          const second = yield* db.addRepository({
+            ...sampleInput,
+            projectPath: "acme/gadgets",
+            localPath: "/repos/acme/gadgets.git",
+          })
+          yield* db.updateRepositorySettings(
+            settingsInput(first.id, fpSettings),
+          )
+          const error = yield* Effect.flip(
+            db.updateRepositorySettings(settingsInput(second.id, fpSettings)),
+          )
+          expect(error).toMatchObject({
+            field: "fpProjectDirectory",
+            message: "That fp project is already mapped to another Repository",
+          })
+        }),
+      ))
+
+    it("offers fp to GitHub-hosted Repositories only", () =>
+      runTest(
+        Effect.gen(function* () {
+          const db = yield* DbService
+          const gitlab = yield* db.addRepository({
+            ...sampleInput,
+            forge: "gitlab",
+            forgeHost: "gitlab.com",
+          })
+          const error = yield* Effect.flip(
+            db.updateRepositorySettings(settingsInput(gitlab.id, fpSettings)),
+          )
+          expect(error).toMatchObject({
+            field: "issueTracker",
+            message: "fp is available only for GitHub-hosted Repositories",
+          })
         }),
       ))
 

@@ -2465,7 +2465,7 @@ function RepositoryCard({
                       Issue Tracker
                     </h3>
                     <span className={ui.dialogSectionMeta}>
-                      Linear optional
+                      Linear or fp optional
                     </span>
                   </div>
                   <label className={ui.dialogField}>
@@ -2477,11 +2477,13 @@ function RepositoryCard({
                     >
                       <option value="github">GitHub</option>
                       <option value="linear">Linear</option>
+                      <option value="fp">fp</option>
                     </select>
                     <span className={ui.dialogFieldHint}>
                       Adding this Repository used GitHub automatically. Linear
-                      maps one project to this Repository. Open Issues still
-                      need the ready-for-agent label.
+                      maps one project to this Repository; fp maps one fp
+                      project and needs no credential. Open Issues still need
+                      the ready-for-agent label.
                     </span>
                   </label>
                   {usesLinearProjectMapping(issueTracker) && (
